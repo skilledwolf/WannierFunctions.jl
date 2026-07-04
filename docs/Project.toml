@@ -1,0 +1,6 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+WannierFunctions = "e9bfaa8f-12b4-4bc0-a903-8435a0d6c1b2"
+
+[compat]
+Documenter = "1"

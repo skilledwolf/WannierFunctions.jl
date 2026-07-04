@@ -10,8 +10,14 @@ using WannierFunctions
 # ---------------------------------------------------------------------------
 const REFROOT = joinpath(@__DIR__, "..", "reference", "wannier90",
                          "test-suite", "tests")
-const GAAS_SEED    = joinpath(REFROOT, "testw90_example01", "gaas")
-const DIAMOND_SEED = joinpath(REFROOT, "testw90_example05", "diamond")
+const DATAROOT = joinpath(@__DIR__, "..", "examples", "data")
+
+# Prefer the vendored reference test-suite inputs; fall back to the identical files shipped
+# under examples/data so CI without the reference clone still validates the physics.
+_seed(refdir, name) = isfile(joinpath(REFROOT, refdir, name * ".win")) ?
+                      joinpath(REFROOT, refdir, name) : joinpath(DATAROOT, name)
+const GAAS_SEED    = _seed("testw90_example01", "gaas")
+const DIAMOND_SEED = _seed("testw90_example05", "diamond")
 
 has_gaas()    = isfile(GAAS_SEED * ".win") && isfile(GAAS_SEED * ".amn") &&
                 isfile(GAAS_SEED * ".mmn")
