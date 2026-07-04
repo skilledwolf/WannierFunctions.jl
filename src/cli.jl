@@ -40,6 +40,9 @@ function main(seedname::AbstractString; pp::Bool=false, write_files::Bool=true, 
     write_files || return model, win, result
 
     write_wout(seedname * ".wout", model, win, result; dis=result.dis)
+    # Checkpoint, as wannier90.x writes at the end of a run — this is what lets postw90.x
+    # (or a later restart) consume our result at full precision.
+    write_chk(seedname * ".chk", Checkpoint(model, win, result))
 
     # Real-space Hamiltonian outputs and band interpolation need per-k energies.
     need_hr = _winflag(win, "write_hr", false) || _winflag(win, "hr_plot", false)

@@ -27,6 +27,7 @@ include("pipeline.jl")
 include("operator.jl")
 include("output.jl")
 include("nnkp.jl")
+include("chk.jl")
 include("wout.jl")
 include("cli.jl")
 include("show.jl")
@@ -42,6 +43,7 @@ export ws_translate_dist, interpolate_bands_ws
 export write_hr, read_hr, write_tb, write_band_dat, write_band_kpt, write_labelinfo
 export write_wout, generate_kpath, main
 export generate_nnkp, write_nnkp, parse_projections, Projection
+export Checkpoint, read_chk, write_chk
 export TBOperator, hamiltonian_operator, position_operator, bands, fourier_to_R
 
 """

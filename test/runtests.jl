@@ -495,3 +495,30 @@ end
         @test_skip false
     end
 end
+
+# =========================================================================
+# (9) CHECKPOINT (.chk) — binary Fortran-record interchange
+# =========================================================================
+@testset "Checkpoint read/write" begin
+    if DIAMOND_MODEL !== nothing
+        win = read_win(DIAMOND_SEED * ".win")
+        res = run_wannier(DIAMOND_MODEL, win)
+        c = Checkpoint(DIAMOND_MODEL, win, res)
+        p = joinpath(mktempdir(), "diamond.chk")
+        write_chk(p, c)
+        c2 = read_chk(p)
+        @test c2.checkpoint == "postwann"
+        @test !c2.have_disentangled
+        @test c2.u_matrix ≈ c.u_matrix
+        @test c2.m_matrix ≈ c.m_matrix
+        @test c2.centres ≈ c.centres
+        @test c2.spreads ≈ c.spreads
+        @test c2.mp_grid == DIAMOND_MODEL.kgrid.mp_grid
+        @test c2.real_lattice ≈ Matrix(DIAMOND_MODEL.lattice.A)
+        # physics consistency: spread recomputed from the checkpoint's M equals the stored one
+        sr = compute_spread(c2.m_matrix, DIAMOND_MODEL.bvectors)
+        @test sr.Ω ≈ sum(c2.spreads) atol = 1e-9
+    else
+        @test_skip false
+    end
+end
