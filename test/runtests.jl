@@ -817,3 +817,90 @@ end
         @test_skip false
     end
 end
+
+# =========================================================================
+# (16) DOS, BOLTZWANN, SHC, KSLICE (oracle benchmark values)
+# =========================================================================
+@testset "DOS + BoltzWann + SHC + kslice" begin
+    # DOS: copper (chk+eig only — exercises the H(R)-only BerryModel)
+    dd = joinpath(REFROOT, "testpostw90_example04_dos")
+    if isfile(joinpath(dd, "copper.chk.fmt.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = mktempdir()
+        for f in ("copper.win", "copper.eig")
+            cp(joinpath(dd, f), joinpath(tmp, f); follow_symlinks = true)
+        end
+        run(pipeline(`bunzip2 -kc $(joinpath(dd, "copper.chk.fmt.bz2"))`, stdout = joinpath(tmp, "copper.chk.fmt")))
+        bm = BerryModel(joinpath(tmp, "copper"))
+        es, d = density_of_states(bm; energies = 8.0:0.25:10.0, kmesh = (10, 10, 10))
+        @test d[6] ≈ 4.7047 atol = 1e-3          # oracle copper-dos.dat at E=9.25 (peak)
+        @test d[1] ≈ 1.9268 atol = 1e-3
+    else
+        @test_skip false
+    end
+
+    # BoltzWann: silicon (ws_distance=true path)
+    bd = joinpath(REFROOT, "testpostw90_boltzwann")
+    if isfile(joinpath(bd, "silicon.chk.fmt.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = mktempdir()
+        for f in ("silicon.win", "silicon.eig")
+            cp(joinpath(bd, f), joinpath(tmp, f); follow_symlinks = true)
+        end
+        for f in ("silicon.chk.fmt", "silicon.mmn")
+            run(pipeline(`bunzip2 -kc $(joinpath(bd, f * ".bz2"))`, stdout = joinpath(tmp, f)))
+        end
+        bm = BerryModel(joinpath(tmp, "silicon"))
+        @test bm.wsdist !== nothing               # use_ws_distance honoured
+        eig = read_eig(joinpath(tmp, "silicon.eig"))
+        res = boltzwann(bm; kmesh = (20, 20, 20), relax_time = 10.0, mus = [5.0],
+                        temps = [300.0], win = (minimum(eig), maximum(eig)))
+        # oracle silicon_elcond.dat (harness tol: abs 10, rel 1e-4)
+        @test res.elcond[1, 1, 1, 1] ≈ 6.504319e6 rtol = 1e-4
+        @test res.elcond[3, 3, 1, 1] ≈ res.elcond[1, 1, 1, 1] rtol = 1e-2   # cubic symmetry
+    else
+        @test_skip false
+    end
+
+    # SHC: Pt (spinor, Qiao method, ws_distance default-true)
+    sd = joinpath(REFROOT, "testpostw90_pt_shc")
+    if isfile(joinpath(sd, "Pt.spn.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = mktempdir()
+        for f in ("Pt.win", "Pt.eig")
+            cp(joinpath(sd, f), joinpath(tmp, f); follow_symlinks = true)
+        end
+        for f in ("Pt.chk.fmt", "Pt.mmn", "Pt.spn")
+            run(pipeline(`bunzip2 -kc $(joinpath(sd, f * ".bz2"))`, stdout = joinpath(tmp, f)))
+        end
+        sm = ShcModel(joinpath(tmp, "Pt"))
+        # 3 spot Fermi energies on a smaller mesh would differ from the benchmark; use the
+        # benchmark mesh (15³) at 3 levels only — cheap (per-level reuse of k-data).
+        out = shc_fermiscan(sm; fermi_energies = [6.0, 17.9, 26.0], kmesh = (15, 15, 15),
+                            eigval_max = 30.0 + 2.0 / 3.0)
+        @test abs(out[1]) < 1e-6                   # empty bands → zero
+        @test out[2] ≈ 1812.32 rtol = 1e-4         # oracle fermiscan at E_F=17.9
+        @test out[3] ≈ 244.09181 rtol = 1e-4       # at E_F=26.0
+    else
+        @test_skip false
+    end
+
+    # kslice: Fe curv+bands (5×5 slice)
+    kd2 = joinpath(REFROOT, "testpostw90_fe_kslicecurv")
+    if isfile(joinpath(kd2, "Fe.chk.fmt.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = mktempdir()
+        for f in ("Fe.win", "Fe.eig")
+            cp(joinpath(kd2, f), joinpath(tmp, f); follow_symlinks = true)
+        end
+        for f in ("Fe.chk.fmt", "Fe.mmn")
+            run(pipeline(`bunzip2 -kc $(joinpath(kd2, f * ".bz2"))`, stdout = joinpath(tmp, f)))
+        end
+        bm = BerryModel(joinpath(tmp, "Fe"))
+        kp, co, ba, cu = kslice(bm; corner = [0.0, 0.0, 0.0], b1 = [0.5, -0.5, -0.5],
+                                b2 = [0.5, 0.5, 0.5], mesh = (5, 5),
+                                fermi_energy = 12.6279, curvature = true)
+        @test length(kp) == 36
+        @test ba[1, 1] ≈ 4.43414 atol = 1e-4       # oracle Fe-kslice-bands.dat first entries
+        @test ba[2, 1] ≈ 4.5557612 atol = 1e-4
+        @test cu[3, 2] ≈ -5.6272413 atol = 1e-4    # oracle curv z at point 2
+    else
+        @test_skip false
+    end
+end

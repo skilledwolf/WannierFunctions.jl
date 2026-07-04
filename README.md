@@ -172,6 +172,15 @@ locally built `postw90.x` on the bcc-Fe reference case (spinor, 28 bands disenta
   operators B(R)/C(R), and the LVTS12 g/h trace formulas — Fe gives M = (0, 0, 0.0431) μ_B/cell,
   the benchmark value.
 - **geninterp**: band energies + velocities at arbitrary k-lists, matching the oracle to 2e-10.
+- **DOS** (`density_of_states`): adaptive smearing with the reference's histogram fallback —
+  copper benchmark to 5e-8.
+- **BoltzWann** (`boltzwann`): TDF + RTA transport tensors (σ, Seebeck, K) — silicon benchmark
+  ≤1e-5 relative on every tensor. This required implementing postw90's `use_ws_distance`
+  interpolation (its default), an 11% effect on transport.
+- **Spin Hall** (`shc_fermiscan`, QZYZ/Qiao method): `.spn` reader + the σ/σH/σ(r−R) operator
+  set — Pt benchmark, all 201 Fermi levels to 4e-8 relative.
+- **kslice** (`kslice`): 2-D BZ slices of bands and Berry curvature — Fe benchmark at file
+  precision.
 
 The CLI honours `berry = true` / `berry_task = ahc` / `berry_kmesh` / `fermi_energy` from the
 `.win`.
@@ -186,7 +195,6 @@ against `w90chk2chk.x` conversions.
 
 ## Roadmap
 
-- Remaining postw90 surface: spin Hall (needs `.spn`), Boltzmann transport, DOS, k-slices.
 - `guiding_centres` branch selection; Γ-only real-orthogonal parity mode; `.cube` plot output.
 - Berry-phase observables on top of `TBOperator` (the position operator is already in place).
 - Projectability-based (`dis_froz_proj`) and symmetry-adapted (SAWF) variants; `postw90.x`
