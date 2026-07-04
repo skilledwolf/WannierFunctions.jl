@@ -143,7 +143,7 @@ neighbour `k+b`.
 By default the reference disables the convergence-window check and simply runs the requested
 `num_iter` iterations; this package follows the same behaviour.
 
-## 5. Disentanglement (Souza–Marzari–Vanderbilt) — M3, in progress
+## 5. Disentanglement (Souza–Marzari–Vanderbilt)
 
 When the `J = num_wann` bands of interest are **entangled** with other bands (metals, or a
 conduction manifold crossing the target group), there is no isolated set of `J` bands to
@@ -159,8 +159,10 @@ self-consistent eigenproblem at each k), then **(2)** run the ordinary MLWF mini
 `Ω̃` (§4) inside that fixed subspace. The output is a rectangular `num_bands × num_wann`
 embedding `U_opt^{(k)}` plus a square initial `U^{(k)}` for step (2).
 
-This milestone (**M3**) is in progress. The isolated-band path (`num_bands == num_wann`) is
-fully validated and needs no disentanglement.
+This is implemented and validated: `run_wannier` auto-selects it when `num_bands > num_wann`. On
+silicon (12 → 8, frozen window) the Ω_I convergence trace matches the reference iteration by
+iteration and the final spread to ~1e-8; copper (a metal, 12 → 7) matches to ~1e-7. The isolated
+path (`num_bands == num_wann`) skips this step entirely.
 
 ## 6. Wannier interpolation H(R) → H(k)
 

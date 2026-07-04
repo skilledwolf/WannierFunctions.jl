@@ -35,13 +35,14 @@ bands = interpolate_bands(Hr, irvec, ndegen, kpath)    # ← replaces bands_plot
 
 | `.win` keyword | Effect here |
 |----------------|-------------|
-| `num_wann`, `num_bands` | read from `.win`; `num_bands == num_wann` is the validated (isolated) path |
+| `num_wann`, `num_bands` | read from `.win`; `num_bands > num_wann` triggers disentanglement automatically |
 | `mp_grid` | drives the k-mesh, b-vectors, and the Wigner–Seitz set |
 | `num_iter` | passed to `wannierise(model; num_iter = …)` |
 | `unit_cell_cart`, `atoms_frac/cart` | build the lattice; cell may be in `bohr` |
 | `projections` | consumed to build the initial gauge from the `.amn` |
 | `kpoints` | the mesh; `kpoint_path` gives the interpolation path |
-| `dis_win_*`, `dis_froz_*`, `dis_num_iter` | disentanglement — **not yet supported** (M3, in progress) |
+| `dis_win_*`, `dis_froz_*`, `dis_num_iter`, `dis_mix_ratio` | disentanglement — **supported**; `run_wannier` auto-selects it when `num_bands > num_wann` |
+| `bands_plot`, `bands_num_points`, `write_hr`, `write_tb` | honoured by the `bin/wannier90.jl` CLI to write the band / `_hr.dat` / `_tb.dat` files |
 
 ## What you get back
 
@@ -55,32 +56,35 @@ Instead of scraping the `.wout`, you read fields directly:
 - `res.omega_trace`, `res.niter`, `res.converged` — the convergence trace.
 
 These reproduce the reference `.wout` numbers to the test-suite tolerances (~1e-6 on the Omega
-components, ~1e-5 Å on centres) for the isolated-bands case.
+components, ~1e-5 Å on centres), for both the isolated-bands and the disentanglement cases.
 
 ## Supported vs. not-yet-supported
 
-**Supported and validated (M0–M2):**
+**Supported and validated:**
 
 - Reading `.win/.amn/.mmn/.eig`.
 - b-vector shells and B1 weights from the mesh.
 - Initial (Löwdin-projected) gauge, centres, and spread.
 - MLWF localisation for `num_bands == num_wann` (isolated bands).
+- **Disentanglement** (`num_bands > num_wann`) with outer + frozen energy windows
+  (Souza–Marzari–Vanderbilt Ω_I minimisation) — validated on silicon and copper.
 - Wannier interpolation: `H(k) → H(R)` on the Wigner–Seitz set, and band interpolation on a
   k-path.
+- **Output writers**: `.wout`, `_hr.dat`, `_tb.dat`, `_band.dat/.kpt/.labelinfo.dat`, driven by
+  the `bin/wannier90.jl` command-line front end (a drop-in for `wannier90.x`).
 
 **Not yet supported:**
 
-- **Disentanglement** (`num_bands > num_wann`, `dis_*` windows) — Souza–Marzari–Vanderbilt Ω_I
-  minimisation. **In progress (M3).** Until it lands, only isolated-band systems
-  (`num_bands == num_wann`, no `.eig` window) are handled.
 - **`.chk` / `.chk.fmt`** read/write for full-precision interchange with `wannier90.x`.
 - **`use_ws_distance`** minimal-image refinement in interpolation (the reference default). Band
-  interpolation currently uses the plain Wigner–Seitz weighting; for most systems the difference
-  is small, but it can shift reference-exact band values near cell boundaries.
-- **Position operator** `r(R)` / `_r.dat`, `_tb.dat`, and Berry-phase observables.
+  interpolation currently uses the plain Wigner–Seitz weighting; all cases validated here set it
+  `.false.`. For most systems the difference is small, but it can shift band values near cell
+  boundaries.
+- **Position operator** `r(R)` / `_r.dat` and Berry-phase observables (`_tb.dat` is written with a
+  zero r-block placeholder).
 - **Γ-only** real-gauge minimiser (a distinct algorithm in the reference); use the general path.
-- File **writers** for `.wout`, `_hr.dat`, `_band.dat` are not part of the current API — results
-  are returned as Julia values.
+- Projectability (`dis_froz_proj`) / symmetry-adapted (SAWF) variants, and `postw90.x`
+  post-processing (out of scope for the core).
 
 ## Behavioural notes to expect
 

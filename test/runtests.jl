@@ -244,3 +244,64 @@ end
 end
 
 end  # top-level testset
+
+# =========================================================================
+# (3) DISENTANGLEMENT VALIDATION (M3) — silicon & copper
+#     Silicon's overlap file ships bz2-compressed; both cases are staged into
+#     a tempdir. Skipped cleanly if the reference tree or `bunzip2` is absent.
+# =========================================================================
+@testset "Disentanglement validation" begin
+    tests_dir = joinpath(@__DIR__, "..", "reference", "wannier90", "test-suite", "tests")
+
+    # -- silicon example03: 12 → 8 WF, outer + frozen window --
+    @testset "silicon example03" begin
+        si = joinpath(tests_dir, "testw90_example03")
+        mmnbz = joinpath(@__DIR__, "..", "reference", "wannier90", "test-suite",
+                         "checkpoints", "si_geninterp", "silicon.mmn.bz2")
+        staged = false
+        seed = ""
+        if isfile(joinpath(si, "silicon.win")) && isfile(mmnbz) &&
+           Sys.which("bunzip2") !== nothing
+            tmp = mktempdir()
+            for f in ("silicon.win", "silicon.amn", "silicon.eig")
+                cp(joinpath(si, f), joinpath(tmp, f))
+            end
+            try
+                run(pipeline(`bunzip2 -kc $mmnbz`, stdout = joinpath(tmp, "silicon.mmn")))
+                seed = joinpath(tmp, "silicon"); staged = true
+            catch
+                staged = false
+            end
+        end
+        if staged
+            model, win, res = run_wannier(seed)
+            @test res.disentangled
+            s = res.spread
+            @test s.ΩI  ≈ 11.849193709 atol = 1e-6
+            @test s.ΩD  ≈ 0.105470244  atol = 1e-6
+            @test s.ΩOD ≈ 2.544910550  atol = 1e-6
+            @test s.Ω   ≈ 14.499574503 atol = 1e-6
+            # Ω_I convergence trace first row matches the reference exactly.
+            @test res.dis.omega_I_trace[1][2] ≈ 12.70775084 atol = 1e-5
+        else
+            @info "silicon inputs unavailable (need reference tree + bunzip2); skipping"
+            @test_skip false
+        end
+    end
+
+    # -- copper example04: 12 → 7 WF (metal), outer + frozen window --
+    @testset "copper example04" begin
+        cu = joinpath(tests_dir, "testw90_example04")
+        if all(isfile(joinpath(cu, "copper." * e)) for e in ("win", "amn", "mmn", "eig"))
+            model, win, res = run_wannier(joinpath(cu, "copper"))
+            @test res.disentangled
+            s = res.spread
+            @test s.ΩI  ≈ 3.662691490 atol = 1e-6
+            @test s.ΩOD ≈ 0.363454087 atol = 1e-6
+            @test s.Ω   ≈ 4.028040058 atol = 1e-6
+        else
+            @info "copper inputs missing; skipping" cu
+            @test_skip false
+        end
+    end
+end
