@@ -21,15 +21,16 @@ Steps 1–3 are unchanged: keep producing `.amn/.mmn/.eig` exactly as before. Th
 replaces **step 4**:
 
 ```julia
-using Wannier90, StaticArrays
+using Wannier90
 
-model = read_model("seedname")          # reads .win/.amn/.mmn/.eig
-res   = wannierise(model; num_iter = 20)   # ← replaces the wannier90.x minimiser
-
-irvec, ndegen = wigner_seitz(model.lattice, model.kgrid.mp_grid)
-Hr, _ = build_hr(res.U, model.eig, model.kgrid, irvec) # ← the H(R) that goes into _hr.dat
-bands = interpolate_bands(Hr, irvec, ndegen, kpath)    # ← replaces bands_plot
+model = read_model("seedname")               # reads .win/.amn/.mmn/.eig
+res   = run_wannier(model)                   # ← replaces the wannier90.x minimiser
+                                             #   (add win_max=…, froz_max=… for entangled bands)
+H = hamiltonian_operator(model, res)         # ← the H(R) that goes into _hr.dat
+E = bands(H, kpath)                          # ← replaces bands_plot
 ```
+
+(And step 2 is covered too: `bin/wannier90.jl -pp seedname` writes the `.nnkp`.)
 
 ## Where your `.win` keywords map
 
@@ -74,23 +75,37 @@ components, ~1e-5 Å on centres), for both the isolated-bands and the disentangl
 - **Output writers**: `.wout`, `_hr.dat`, `_tb.dat`, `_band.dat/.kpt/.labelinfo.dat`, driven by
   the `bin/wannier90.jl` command-line front end (a drop-in for `wannier90.x`).
 
+**Also supported:**
+
+- **`-pp` mode**: `bin/wannier90.jl -pp seed` (or `postproc_setup = .true.`) generates the k-mesh
+  from the `.win` alone and writes `seed.nnkp`, byte-identical to `wannier90.x -pp` — so a new
+  DFT → Wannier workflow can start here, not just finish here.
+- **Position operator** `⟨0m|r|Rn⟩`: `position_operator(model, res)`, and `_tb.dat` is written
+  with real r-blocks (validated against the reference binary to the E15.8 file precision).
+- **Strict input validation**: unknown `.win` keywords error with a did-you-mean suggestion
+  (checked against the reference parser's own keyword catalogue); recognised-but-unsupported
+  keywords warn once. Pass `read_win(path; strict=false)` to downgrade to warnings.
+- **Two optimisers**: the CLI/.win path uses `:w90` (reference-exact); the Julia-native API
+  defaults to `:rcg` (Riemannian CG with real convergence). Same minima, verified by tests.
+
 **Not yet supported:**
 
 - **`.chk` / `.chk.fmt`** read/write for full-precision interchange with `wannier90.x`.
 - **`guiding_centres`** branch selection for the `Im ln` sheet (default off; the CLI warns if you
   set it and falls back to the principal branch).
-- **Position operator** `r(R)` / `_r.dat` and Berry-phase observables (`_tb.dat` is written with a
-  zero r-block placeholder).
+- `_r.dat` and Berry-phase observables (the position operator itself is implemented; `_tb.dat`
+  carries real r-blocks).
 - **Γ-only** real-gauge minimiser (a distinct algorithm in the reference); use the general path.
 - Projectability (`dis_froz_proj`) / symmetry-adapted (SAWF) variants, and `postw90.x`
   post-processing (out of scope for the core).
 
 ## Behavioural notes to expect
 
-- **`converged` is often `false` at the end.** Wannier90's convergence-window check is off by
-  default (`conv_window = -1`), so the loop runs the full `num_iter`. This package matches that;
-  `converged = false` simply means the optional early-stop criterion was not enabled, not that
-  the run failed. Inspect `res.omega_trace` to confirm the spread has plateaued.
+- **Convergence semantics differ by optimiser.** The `.win`/CLI path uses `:w90`, where —
+  matching Wannier90 — the convergence check is off by default (`conv_window = -1`) and the loop
+  runs the full `num_iter`; `converged = false` there just means the optional early stop wasn't
+  enabled. The Julia-native default `:rcg` has a real convergence criterion and `converged`
+  means what it says.
 - **Units.** Centres and spreads come back in Å / Å² even if your `.win` cell is in `bohr`,
   matching the `.wout` convention. Energies are eV.
 - **Branch cut.** The `Im ln` principal branch is used (as in the default, no-guiding-centres
