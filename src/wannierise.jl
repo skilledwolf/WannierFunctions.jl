@@ -118,24 +118,38 @@ struct WannieriseResult
 end
 
 """
-    wannierise(model; num_iter, trial_step=2.0, num_cg_steps=5,
-               conv_tol=1e-10, conv_window=-1, verbose=false) -> WannieriseResult
+    wannierise(model; num_iter, ...) -> WannieriseResult
 
-Minimise the Wannier spread starting from the Löwdin-projected gauge. With the defaults
-(`conv_window = -1`) the loop runs the full `num_iter` iterations, matching Wannier90.
+Minimise the Wannier spread starting from the Löwdin-projected gauge (isolated-bands case,
+num_bands == num_wann). With the defaults (`conv_window = -1`) the loop runs the full `num_iter`
+iterations, matching Wannier90.
 """
-function wannierise(model::Model; num_iter::Int=model_num_iter(model),
-                    trial_step::Float64=2.0, num_cg_steps::Int=5,
-                    conv_tol::Float64=CONV_TOL_DEFAULT, conv_window::Int=-1,
-                    verbose::Bool=false)
-    bv = model.bvectors
+function wannierise(model::Model; num_iter::Int=model_num_iter(model), kwargs...)
+    U0 = initial_gauge(model.A)
+    Mrot0 = rotate_overlaps(model.M, U0, model.bvectors.kpb)
+    return localize(U0, Mrot0, model.bvectors; num_iter=num_iter, kwargs...)
+end
+
+"""
+    localize(U0, Mrot0, bv; num_iter, trial_step=2.0, num_cg_steps=5,
+             conv_tol=1e-10, conv_window=-1, verbose=false) -> WannieriseResult
+
+Run the Marzari–Vanderbilt spread minimisation from an initial square gauge `U0`
+(num_wann × num_wann × nkpt) and its gauge-rotated overlaps `Mrot0`. Shared by the isolated-bands
+path (`wannierise`) and the post-disentanglement handoff, where `U0`/`Mrot0` come from the optimal
+subspace. Ω_I is invariant under this step.
+"""
+function localize(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::BVectors;
+                  num_iter::Int=100, trial_step::Float64=2.0, num_cg_steps::Int=5,
+                  conv_tol::Float64=CONV_TOL_DEFAULT, conv_window::Int=-1,
+                  verbose::Bool=false)
     kpb = bv.kpb
-    nw = model.num_wann
-    nk = nkpt(model.kgrid)
+    nw = size(U0, 1)
+    nk = size(U0, 3)
     wbtot = sum(@view bv.wb[:, 1])
 
-    U = initial_gauge(model.A)
-    Mrot = rotate_overlaps(model.M, U, kpb)
+    U = copy(U0)
+    Mrot = copy(Mrot0)
     sr = compute_spread(Mrot, bv)
     omega_trace = Float64[sr.Ω]
     verbose && @info "iter 0" Ω=sr.Ω ΩI=sr.ΩI ΩOD=sr.ΩOD ΩD=sr.ΩD

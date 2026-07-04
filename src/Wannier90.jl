@@ -21,12 +21,18 @@ include("gauge.jl")
 include("spread.jl")
 include("wannierise.jl")
 include("interpolate.jl")
+include("disentangle.jl")
+include("pipeline.jl")
+include("output.jl")
 
 export Lattice, KGrid, BVectors, Model
 export read_win, read_amn, read_mmn, read_eig
 export read_model, initial_gauge, rotate_overlaps, compute_spread, SpreadResult
-export wannierise, WannieriseResult
+export wannierise, localize, WannieriseResult
+export disentangle, DisentangleResult, WindowData
+export run_wannier, WannierResult, interpolate
 export wigner_seitz, build_hr, interpolate_hk, interpolate_bands
+export write_hr, read_hr, write_tb, write_band_dat, write_band_kpt, write_labelinfo
 
 """
     read_model(seedname) -> Model
