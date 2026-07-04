@@ -31,6 +31,7 @@ include("chk.jl")
 include("plot.jl")
 include("scdm.jl")
 include("berry.jl")
+include("kubo.jl")
 include("geninterp.jl")
 include("wout.jl")
 include("cli.jl")
@@ -52,6 +53,7 @@ export read_unk, plot_wannier_functions, write_xsf, parse_range_list
 export scdm_projections, write_amn
 export BerryModel, berry_curvature_k, anomalous_hall, ahc_fermiscan
 export geninterp, eig_deleig, read_geninterp_kpt
+export optical_conductivity, KuboResult, kubo_S, kubo_A
 export TBOperator, hamiltonian_operator, position_operator, bands, fourier_to_R
 
 """
