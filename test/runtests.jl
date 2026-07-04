@@ -305,3 +305,58 @@ end  # top-level testset
         end
     end
 end
+
+# =========================================================================
+# (4) INTERPOLATION REFINEMENTS — use_ws_distance and k-path generation
+# =========================================================================
+@testset "Interpolation refinements" begin
+    # use_ws_distance interpolation must still satisfy the exact-at-grid-points invariant
+    # (the per-pair minimal-image shifts are multiples of mp_grid, so they add no phase at
+    # grid k-points), and must run without error.
+    @testset "ws_distance grid invariant" begin
+        if DIAMOND_MODEL !== nothing
+            res = wannierise(DIAMOND_MODEL; num_iter = 20)
+            irvec, ndegen = wigner_seitz(DIAMOND_MODEL.lattice, DIAMOND_MODEL.kgrid.mp_grid)
+            Hr, _ = build_hr(res.U, DIAMOND_MODEL.eig, DIAMOND_MODEL.kgrid, irvec)
+            kfrac = DIAMOND_MODEL.kgrid.frac
+            Ews = interpolate_bands_ws(Hr, irvec, ndegen, res.spread.centres,
+                                       DIAMOND_MODEL.lattice, DIAMOND_MODEL.kgrid.mp_grid, kfrac)
+            maxerr = maximum(maximum(abs.(Ews[:, k] .- sort(DIAMOND_MODEL.eig[:, k])))
+                             for k in 1:length(kfrac))
+            @test maxerr ≤ 1e-8
+        else
+            @test_skip false
+        end
+    end
+
+    # generate_kpath must reprint the endpoint of a discontinuous segment (and its label).
+    @testset "k-path discontinuity" begin
+        winpath = joinpath(mktempdir(), "disc.win")
+        write(winpath, """
+        num_wann = 1
+        mp_grid : 1 1 1
+        begin unit_cell_cart
+        1.0 0.0 0.0
+        0.0 1.0 0.0
+        0.0 0.0 1.0
+        end unit_cell_cart
+        begin kpoints
+        0.0 0.0 0.0
+        end kpoints
+        begin kpoint_path
+        A 0.0 0.0 0.0  B 0.5 0.0 0.0
+        B 0.5 0.0 0.0  C 0.5 0.5 0.0
+        D 0.0 0.5 0.0  A 0.0 0.0 0.0
+        end kpoint_path
+        """)
+        win = read_win(winpath)
+        lat = Wannier90.Lattice(win.unit_cell)
+        kpts, xvals, labels, lidx = generate_kpath(win, lat; bands_num_points = 10)
+        # A, B, C (end of the discontinuous 2nd segment), D (start of 3rd), A → 5 labels
+        @test "C" in labels
+        @test "D" in labels
+        @test length(labels) == 5
+        @test issorted(xvals)                       # monotone non-decreasing path coordinate
+        @test length(lidx) == length(labels)
+    end
+end

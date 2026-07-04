@@ -55,9 +55,10 @@ The tiny residuals on GaAs/copper (~4e-8) are the CODATA bohr-radius constant at
 (their `.win` cells are in bohr); diamond/silicon (cells in Å) match to machine precision. No
 benchmark numbers are invented — see `docs/reference-notes/` for provenance.
 
-Not yet implemented: the `use_ws_distance` minimal-image interpolation refinement (the reference
-default; all validated cases set it `.false.`), the Γ-only real-gauge minimiser, `.chk`
-interchange, and `postw90.x` post-processing — see the roadmap.
+Not yet implemented: the Γ-only real-gauge minimiser, `.chk` interchange, guiding-centre branch
+selection, and `postw90.x` post-processing — see the roadmap. (The `use_ws_distance` minimal-image
+interpolation refinement — the reference default — *is* implemented and validated against the
+reference binary to ~2e-5 eV.)
 
 ## Installation
 
@@ -133,8 +134,6 @@ outputs, in the same formats, as `wannier90.x silicon`.
 
 ## Roadmap
 
-- **`use_ws_distance`** minimal-image improvement for interpolation, matching the reference
-  default (all current validated cases set it `.false.`).
 - **`.chk` / `.chk.fmt` interchange** for full-precision round-tripping with `wannier90.x`.
 - **Position operator** `r(R)`, `_r.dat`, and Wannier-gauge observables (Berry-phase quantities).
 - Γ-only (real-gauge) minimiser path (a distinct algorithm from the general complex minimiser).

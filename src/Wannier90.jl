@@ -34,6 +34,7 @@ export wannierise, localize, WannieriseResult
 export disentangle, DisentangleResult, WindowData
 export run_wannier, WannierResult, interpolate
 export wigner_seitz, build_hr, interpolate_hk, interpolate_bands
+export ws_translate_dist, interpolate_bands_ws
 export write_hr, read_hr, write_tb, write_band_dat, write_band_kpt, write_labelinfo
 export write_wout, generate_kpath, main
 

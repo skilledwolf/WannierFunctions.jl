@@ -20,6 +20,9 @@ function main(seedname::AbstractString; write_files::Bool=true, verbose::Bool=tr
     win = read_win(seedname * ".win")
 
     verbose && @info "Wannier90.jl" seedname num_wann=model.num_wann num_bands=model.num_bands nkpt=nkpt(model.kgrid)
+    _winflag(win, "guiding_centres", false) &&
+        @warn "guiding_centres is set but not yet supported; using the principal Im-ln branch " *
+              "(results may differ for poorly-localised initial projections)"
     result = run_wannier(model, win; verbose=verbose)
     verbose && @info("done",
         disentangled=result.disentangled, Ω=result.spread.Ω,
@@ -45,7 +48,12 @@ function main(seedname::AbstractString; write_files::Bool=true, verbose::Bool=tr
                 npts = _winint(win, "bands_num_points", 100)
                 kpts, xvals, labels, lidx = generate_kpath(win, model.lattice; bands_num_points=npts)
                 if !isempty(kpts)
-                    E = interpolate_bands(Hr, irvec, ndegen, kpts)
+                    # use_ws_distance defaults to true in Wannier90; honour it for band output.
+                    uws = _winflag(win, "use_ws_distance", true)
+                    E = uws ?
+                        interpolate_bands_ws(Hr, irvec, ndegen, result.spread.centres,
+                                             model.lattice, model.kgrid.mp_grid, kpts) :
+                        interpolate_bands(Hr, irvec, ndegen, kpts)
                     write_band_dat(seedname * "_band.dat", xvals, E)
                     write_band_kpt(seedname * "_band.kpt", kpts)
                     write_labelinfo(seedname * "_band.labelinfo.dat",

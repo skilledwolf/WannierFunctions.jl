@@ -116,21 +116,29 @@ function generate_kpath(win::WinInput, lattice::Lattice; bands_num_points::Int=1
     isempty(segs) && return (SVector{3,Float64}[], Float64[], String[], Int[])
     seglen = [norm(lattice.B * (s[4] - s[2])) for s in segs]
     base = seglen[1] > 0 ? seglen[1] : 1.0
-    npts = [max(1, round(Int, bands_num_points * l / base)) for l in seglen]
+    # Fortran `nint` rounds halves away from zero (Julia's default rounds to even).
+    npts = [max(1, round(Int, bands_num_points * l / base, RoundNearestTiesAway)) for l in seglen]
 
     kpts = SVector{3,Float64}[]; xvals = Float64[]; labels = String[]; lidx = Int[]
     x = 0.0
     for (i, s) in enumerate(segs)
-        push!(labels, s[1]); push!(lidx, length(kpts) + 1)
+        push!(labels, s[1]); push!(lidx, length(kpts) + 1)     # segment-start special point
         for j in 0:npts[i]-1
             f = j / npts[i]
             push!(kpts, s[2] + (s[4] - s[2]) * f)
             push!(xvals, x + seglen[i] * f)
         end
         x += seglen[i]
+        # Emit the segment endpoint here only if the path does not continue smoothly into the next
+        # segment (last segment, or a discontinuity where the next segment starts elsewhere). For a
+        # continuous join, the shared point is emitted as the next segment's first sample.
+        is_last = i == length(segs)
+        continuous = !is_last && norm(segs[i+1][2] - s[4]) < 1e-6
+        if is_last || !continuous
+            push!(kpts, s[4]); push!(xvals, x)
+            push!(labels, s[3]); push!(lidx, length(kpts))
+        end
     end
-    push!(kpts, segs[end][4]); push!(xvals, x)
-    push!(labels, segs[end][3]); push!(lidx, length(kpts))
     return kpts, xvals, labels, lidx
 end
 
@@ -145,6 +153,105 @@ function interpolate_bands(Hr::Array{ComplexF64,3}, irvec::Vector{NTuple{3,Int}}
     eigs = Matrix{Float64}(undef, nw, length(kpts))
     for (ik, kf) in enumerate(kpts)
         H = interpolate_hk(Hr, irvec, ndegen, kf)
+        eigs[:, ik] = eigvals(Hermitian((H + H') / 2))
+    end
+    return eigs
+end
+
+# ---------------------------------------------------------------------------
+# use_ws_distance: per-Wannier-pair minimal-image improvement (default in the reference).
+# For each pair (i,j) and each R, translate WF j by supercell vectors so it lands in the
+# Wigner–Seitz cell around WF i, giving a pair-specific set of equivalent R-vectors with
+# degeneracy ndeg(i,j,R). Mirrors ws_distance.F90 (R_wz_sc) and plot.F90:786-797.
+# ---------------------------------------------------------------------------
+
+"Place `Rin` (Cartesian) in the Wigner–Seitz cell around the origin; return the equivalent integer
+lattice shifts (multiples of mp_grid) and their degeneracy."
+function _R_wz_sc(Rin::SVector{3,Float64}, lat::Lattice, mp_grid::NTuple{3,Int},
+                 ws_search_size::Int, tol::Float64)
+    Rin_f = lat.A \ Rin
+    mod2 = sum(abs2, Rin)
+    best = (0, 0, 0)
+    rng = -(ws_search_size + 1):(ws_search_size + 1)
+    for i in rng, j in rng, k in rng
+        s = SVector{3,Float64}(i * mp_grid[1], j * mp_grid[2], k * mp_grid[3])
+        R = lat.A * (Rin_f + s)
+        d2 = sum(abs2, R)
+        if d2 < mod2 - 1e-13
+            mod2 = d2
+            best = (i * mp_grid[1], j * mp_grid[2], k * mp_grid[3])
+        end
+    end
+    if mod2 < tol^2
+        return NTuple{3,Int}[best]
+    end
+    Rbz_f = lat.A \ (lat.A * (Rin_f + SVector{3,Float64}(best...)))   # = fractional of R_bz
+    dref = sqrt(mod2)
+    shifts = NTuple{3,Int}[]
+    for i in rng, j in rng, k in rng
+        s = SVector{3,Float64}(i * mp_grid[1], j * mp_grid[2], k * mp_grid[3])
+        R = lat.A * (Rbz_f + s)
+        if abs(sqrt(sum(abs2, R)) - dref) < tol
+            push!(shifts, (best[1] + i * mp_grid[1], best[2] + j * mp_grid[2], best[3] + k * mp_grid[3]))
+        end
+    end
+    return shifts
+end
+
+"""
+    ws_translate_dist(irvec, centres, lattice, mp_grid; ws_search_size=2, tol=1e-5) -> irdist
+
+For each Wannier pair (i,j) and each R (column of `irvec`), the minimal-image-equivalent integer
+R-vectors. `irdist[i,j,ir]` is a `Vector{NTuple{3,Int}}` of length ndeg(i,j,ir). `centres` is the
+(3 × num_wann) Cartesian Wannier centres.
+"""
+function ws_translate_dist(irvec::Vector{NTuple{3,Int}}, centres::Matrix{Float64}, lat::Lattice,
+                          mp_grid::NTuple{3,Int}; ws_search_size::Int=2, tol::Float64=1.0e-5)
+    nw = size(centres, 2); nr = length(irvec)
+    irdist = Array{Vector{NTuple{3,Int}}}(undef, nw, nw, nr)
+    for ir in 1:nr
+        Rcart = lat.A * SVector{3,Float64}(irvec[ir]...)
+        for jw in 1:nw, iw in 1:nw
+            v = Rcart + SVector{3,Float64}(centres[:, jw]) - SVector{3,Float64}(centres[:, iw])
+            shifts = _R_wz_sc(v, lat, mp_grid, ws_search_size, tol)
+            irdist[iw, jw, ir] = [(irvec[ir][1] + s[1], irvec[ir][2] + s[2], irvec[ir][3] + s[3])
+                                  for s in shifts]
+        end
+    end
+    return irdist
+end
+
+"Interpolated H(k') with the per-pair minimal-image (ws_distance) weighting."
+function interpolate_hk_ws(Hr::Array{ComplexF64,3}, ndegen::Vector{Int},
+                          irdist::Array{Vector{NTuple{3,Int}}}, kfrac::SVector{3,Float64})
+    nw = size(Hr, 1); nr = size(irdist, 3)
+    H = zeros(ComplexF64, nw, nw)
+    for ir in 1:nr, jw in 1:nw, iw in 1:nw
+        dl = irdist[iw, jw, ir]
+        nd = length(dl)
+        acc = zero(ComplexF64)
+        for R in dl
+            acc += cis(TWOPI * dot(kfrac, SVector{3,Float64}(R...)))
+        end
+        H[iw, jw] += acc / (ndegen[ir] * nd) * Hr[iw, jw, ir]
+    end
+    return H
+end
+
+"""
+    interpolate_bands_ws(Hr, irvec, ndegen, centres, lattice, mp_grid, kpts) -> eigs
+
+Band interpolation with the `use_ws_distance=.true.` minimal-image improvement (the reference
+default). `centres` are the (3 × num_wann) Cartesian Wannier centres.
+"""
+function interpolate_bands_ws(Hr::Array{ComplexF64,3}, irvec::Vector{NTuple{3,Int}},
+                             ndegen::Vector{Int}, centres::Matrix{Float64}, lattice::Lattice,
+                             mp_grid::NTuple{3,Int}, kpts::Vector{SVector{3,Float64}})
+    irdist = ws_translate_dist(irvec, centres, lattice, mp_grid)
+    nw = size(Hr, 1)
+    eigs = Matrix{Float64}(undef, nw, length(kpts))
+    for (ik, kf) in enumerate(kpts)
+        H = interpolate_hk_ws(Hr, ndegen, irdist, kf)
         eigs[:, ik] = eigvals(Hermitian((H + H') / 2))
     end
     return eigs

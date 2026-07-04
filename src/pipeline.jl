@@ -48,15 +48,22 @@ function run_wannier(seedname::AbstractString; verbose::Bool=false)
 end
 
 """
-    interpolate(model, result, kpts) -> energies
+    interpolate(model, result, kpts; use_ws_distance=false) -> energies
 
 Interpolate band energies (num_wann × npts) at fractional k-points `kpts`, using the wannierised
-gauge and (subspace) eigenvalues in `result`. Requires `result.eig_interp !== nothing`.
+gauge and (subspace) eigenvalues in `result`. Requires `result.eig_interp !== nothing`. With
+`use_ws_distance=true` the per-Wannier-pair minimal-image improvement (the reference default) is
+applied — slightly more accurate near cell boundaries.
 """
-function interpolate(model::Model, result::WannierResult, kpts::Vector{SVector{3,Float64}})
+function interpolate(model::Model, result::WannierResult, kpts::Vector{SVector{3,Float64}};
+                     use_ws_distance::Bool=false)
     result.eig_interp !== nothing ||
         error("no band energies available for interpolation (isolated case without .eig)")
     irvec, ndegen = wigner_seitz(model.lattice, model.kgrid.mp_grid)
     Hr, _ = build_hr(result.U, result.eig_interp, model.kgrid, irvec)
+    if use_ws_distance
+        return interpolate_bands_ws(Hr, irvec, ndegen, result.spread.centres,
+                                    model.lattice, model.kgrid.mp_grid, kpts)
+    end
     return interpolate_bands(Hr, irvec, ndegen, kpts)
 end

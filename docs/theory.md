@@ -198,8 +198,12 @@ load-bearing and are reproduced exactly:
   *undivided* and the weight `1/N_deg(R)` is applied at interpolation. The set satisfies the sum
   rule `Σ_R 1/N_deg(R) = ∏ mp_grid`, which the code checks.
 
-The reference's default `use_ws_distance` minimal-image refinement (a per-matrix-element shift
-that further improves smoothness) is not yet applied here; it is on the roadmap.
+The reference's default `use_ws_distance` minimal-image refinement is also implemented
+(`ws_translate_dist` / `interpolate_bands_ws`): for each Wannier pair `(i,j)` and each `R`, WF `j`
+is translated by supercell vectors into the Wigner–Seitz cell around WF `i`, giving a pair-specific
+set of equivalent `R`-vectors of degeneracy `ndeg(i,j,R)`; the interpolation phase then uses those
+shifted vectors with weight `1/(N_deg(R)·ndeg(i,j,R))`. This is validated against the reference
+binary to ~2e-5 eV and is the default for the command-line front end.
 
 ---
 

@@ -69,17 +69,16 @@ components, ~1e-5 Å on centres), for both the isolated-bands and the disentangl
 - **Disentanglement** (`num_bands > num_wann`) with outer + frozen energy windows
   (Souza–Marzari–Vanderbilt Ω_I minimisation) — validated on silicon and copper.
 - Wannier interpolation: `H(k) → H(R)` on the Wigner–Seitz set, and band interpolation on a
-  k-path.
+  k-path, including the `use_ws_distance` minimal-image refinement (the reference default;
+  validated against the reference binary to ~2e-5 eV).
 - **Output writers**: `.wout`, `_hr.dat`, `_tb.dat`, `_band.dat/.kpt/.labelinfo.dat`, driven by
   the `bin/wannier90.jl` command-line front end (a drop-in for `wannier90.x`).
 
 **Not yet supported:**
 
 - **`.chk` / `.chk.fmt`** read/write for full-precision interchange with `wannier90.x`.
-- **`use_ws_distance`** minimal-image refinement in interpolation (the reference default). Band
-  interpolation currently uses the plain Wigner–Seitz weighting; all cases validated here set it
-  `.false.`. For most systems the difference is small, but it can shift band values near cell
-  boundaries.
+- **`guiding_centres`** branch selection for the `Im ln` sheet (default off; the CLI warns if you
+  set it and falls back to the principal branch).
 - **Position operator** `r(R)` / `_r.dat` and Berry-phase observables (`_tb.dat` is written with a
   zero r-block placeholder).
 - **Γ-only** real-gauge minimiser (a distinct algorithm in the reference); use the general path.
