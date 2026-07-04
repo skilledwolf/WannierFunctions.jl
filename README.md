@@ -202,6 +202,15 @@ locally built `postw90.x` on the bcc-Fe reference case (spinor, 28 bands disenta
   C tensor, the kinetic magnetoelectric K tensor (orbital + spin), natural optical activity
   γ_abc (orbital + spin), and the Fermi-level DOS, over an arbitrary fractional k-box —
   **five of the six tellurium oracle files are byte-identical**, the sixth matches to 8e-17.
+- **Shift current** (`shift_current`, IATS18): the full generalised-derivative formula with
+  both phase conventions, the finite-η correction, and adaptive smearing — all five GaAs
+  oracle variants within 2e-7 (the harness allows 1e-6).
+- **k·p coefficients** (`kdotp`): Löwdin partitioning to second order — the GaAs oracle file
+  is byte-identical (orders 1–2 match at 1e-6 in gauge-invariant magnitude).
+- **`wannier90.x` output extras**: Gaussian `.cube` WF plots (GaAs oracle numerically
+  identical on every line), `_r.dat` position matrix elements (diamond oracle: integers exact,
+  floats at the F12.6 last digit), and `.bxsf` Fermi-surface grids (copper oracle at E16.8
+  precision).
 
 The CLI honours `berry = true` / `berry_task = ahc` / `berry_kmesh` / `fermi_energy` from the
 `.win`.
@@ -216,13 +225,10 @@ against `w90chk2chk.x` conversions.
 
 ## Roadmap
 
-- Shift current (`berry_task = sc`) and k·p expansion (`kdotp`) — the two remaining postw90
-  response tasks; tetrahedron smearing for SHC.
-- Output-parity sweep for `wannier90.x` extras: `.cube` plots, `_r.dat`, `.bxsf` Fermi
-  surfaces, `write_hr_diag`, guiding centres, `dis_spheres`; Γ-only real-orthogonal parity
-  mode; SLWF+C selective localisation; symmetry-adapted WFs.
+- Tetrahedron smearing for SHC; guiding centres, `dis_spheres`, PDWF, SLWF+C selective
+  localisation; Γ-only real-orthogonal parity mode; symmetry-adapted WFs.
 - Ecosystem: TB-model constructors from `hr.dat`/`tb.dat`, a DFTK.jl in-memory bridge,
-  irreducible-BZ sampling with tensor symmetrisation (WannierBerri-style).
+  irreducible-BZ sampling with tensor symmetrisation (WannierBerri-style), injection current.
   See [`docs/reference-notes/parity-audit-2026.md`](docs/reference-notes/parity-audit-2026.md)
   for the full triage.
 

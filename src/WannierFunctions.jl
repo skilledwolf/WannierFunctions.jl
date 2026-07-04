@@ -40,7 +40,10 @@ include("morb.jl")
 include("gyrotropic.jl")
 include("kslice.jl")
 include("geninterp.jl")
+include("kdotp.jl")
+include("shiftcurrent.jl")
 include("kpath.jl")
+include("extras.jl")
 include("wout.jl")
 include("cli.jl")
 include("show.jl")
@@ -57,7 +60,7 @@ export write_hr, read_hr, write_tb, write_band_dat, write_band_kpt, write_labeli
 export write_wout, generate_kpath, main
 export generate_nnkp, write_nnkp, parse_projections, parse_exclude_bands, Projection
 export Checkpoint, read_chk, write_chk, read_chk_fmt, write_chk_fmt
-export read_unk, plot_wannier_functions, write_xsf, parse_range_list
+export read_unk, plot_wannier_functions, write_xsf, parse_range_list, wannier_function_grid
 export scdm_projections, write_amn
 export BerryModel, berry_curvature_k, anomalous_hall, ahc_fermiscan
 export geninterp, eig_deleig, read_geninterp_kpt
@@ -66,6 +69,9 @@ export density_of_states, write_dos
 export SpinModel, spin_moment, spin_expectation
 export kpath, kpath_points, kpath_segments, write_kpath
 export gyrotropic, write_gyrotropic
+export kdotp, write_kdotp
+export shift_current, write_shift_current
+export write_rmn, write_bxsf, write_cube, parse_atoms
 export boltzwann, BoltzWannResult
 export ShcModel, ShcRyooModel, shc_fermiscan, shc_freqscan, read_spn, read_shu, write_shc
 export kslice, write_kslice

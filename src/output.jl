@@ -14,12 +14,12 @@ using Printf
 #
 # `fortran_e(x, w, d)` renders `x` in `(Ew.d)`, i.e. field width `w`, `d` mantissa
 # digits after the point, exponent always signed with (at least) two digits.
-function fortran_e(x::Real, w::Int, d::Int)
+function fortran_e(x::Real, w::Int, d::Int; edigits::Int=2)
     if !isfinite(x)
         return lpad(string(x), w)
     end
     if x == 0.0
-        body = "0." * lpad("", d, "0") * "E+00"   # 0.000...E+00
+        body = "0." * lpad("", d, "0") * "E+" * lpad("0", edigits, "0")
         return lpad(body, w)
     end
     neg = x < 0
@@ -40,7 +40,7 @@ function fortran_e(x::Real, w::Int, d::Int)
     frac = mant_str[3:end]                  # digits after "0."
     esign = e < 0 ? "-" : "+"
     eabs = abs(e)
-    estr = eabs < 100 ? @sprintf("%02d", eabs) : string(eabs)
+    estr = eabs < 10^edigits ? @sprintf("%0*d", edigits, eabs) : string(eabs)
     body = (neg ? "-" : "") * "0." * frac * "E" * esign * estr
     return lpad(body, w)
 end

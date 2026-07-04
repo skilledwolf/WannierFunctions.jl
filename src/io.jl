@@ -61,7 +61,9 @@ function _validate_win(raw::Dict{String,String}, blocks::Dict{String,Vector{Stri
     for key in keys(raw)
         key in SUPPORTED_KEYWORDS && continue
         key in IGNORED_KEYWORDS && continue
-        if key in W90_KNOWN_KEYWORDS
+        # range-vector keywords (kdotp_bands, gyrotropic_band_list, …) are catalogued as
+        # blocks but may equally appear inline
+        if key in W90_KNOWN_KEYWORDS || key in W90_KNOWN_BLOCKS
             @warn "$path: keyword `$key` is recognised (a wannier90 keyword) but not supported " *
                   "by WannierFunctions.jl — ignoring it" _id = Symbol(:unsup_, key) maxlog = 1
         else

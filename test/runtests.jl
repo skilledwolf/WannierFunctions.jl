@@ -1059,3 +1059,68 @@ end
         @test_skip false
     end
 end
+
+@testset "shift current + kdotp + w90 output extras" begin
+    # kdotp: GaAs at L, bands 4-5 (oracle checks only order 0 — orders 1/2 are gauge-sensitive)
+    kd = joinpath(REFROOT, "testpostw90_gaas_kdotp")
+    if isfile(joinpath(kd, "gaas.chk.fmt.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = mktempdir()
+        cp(joinpath(kd, "gaas.win"), joinpath(tmp, "gaas.win"); follow_symlinks = true)
+        cp(joinpath(kd, "gaas.eig"), joinpath(tmp, "gaas.eig"); follow_symlinks = true)
+        run(pipeline(`bunzip2 -kc $(joinpath(kd, "gaas.chk.fmt.bz2"))`, stdout = joinpath(tmp, "gaas.chk.fmt")))
+        bm = BerryModel(joinpath(tmp, "gaas"))
+        res = kdotp(bm; kpoint = [0.0, 0.5, 0.0], bands = [4, 5])
+        @test real(res.T0[1, 1]) ≈ 6.4827435 atol = 1e-4      # oracle gaas-kdotp_0.dat
+        @test real(res.T0[2, 2]) ≈ 8.6209080 atol = 1e-4
+        @test abs(res.T0[1, 2]) < 1e-10
+    else
+        @test_skip false
+    end
+
+    # shift current: GaAs σ_xyz, TB phase convention, no eta correction (25³ in the oracle —
+    # here the same physics on the benchmark mesh but only spot frequencies via coarse 10³ run)
+    sc = joinpath(REFROOT, "testpostw90_gaas_sc_xyz_ws")
+    if isfile(joinpath(sc, "gaas.mmn.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = mktempdir()
+        for f in ("gaas.win", "gaas.eig")
+            cp(joinpath(sc, f), joinpath(tmp, f); follow_symlinks = true)
+        end
+        for f in ("gaas.chk.fmt", "gaas.mmn")
+            run(pipeline(`bunzip2 -kc $(joinpath(sc, f * ".bz2"))`, stdout = joinpath(tmp, f)))
+        end
+        emax = maximum(read_eig(joinpath(tmp, "gaas.eig"))) + 0.6667
+        freqs = collect(range(0.0, 10.0; length = 201))
+        res = shift_current(joinpath(tmp, "gaas"); fermi_energy = 7.7414, freqs = freqs,
+                            kmesh = (10, 10, 10), phase_conv = 1, sc_eta = 0.04,
+                            eta_corr = true, eigval_max = emax)
+        # oracle gaas-sc_xyz.dat (ws variant, 10³ mesh): σ_xyz at ω = 1.65 eV (row 34)
+        ixyz = 6                                    # bc packing: xx yy zz xy xz yz
+        @test res.sc[1, ixyz, 34] ≈ 0.72455917e-5 atol = 1e-6
+    else
+        @test_skip false
+    end
+
+    # _r.dat: diamond (reference-exact gauge trajectory via the :w90 optimiser)
+    rd = joinpath(REFROOT, "testw90_rmn")
+    if isfile(joinpath(rd, "diamond.mmn")) || isfile(joinpath(rd, "diamond.mmn.bz2"))
+        tmp = mktempdir()
+        for f in ("diamond.win", "diamond.eig", "diamond.amn", "diamond.mmn")
+            src = joinpath(rd, f)
+            if isfile(src)
+                cp(src, joinpath(tmp, f); follow_symlinks = true)
+            elseif isfile(src * ".bz2") && Sys.which("bunzip2") !== nothing
+                run(pipeline(`bunzip2 -kc $(src * ".bz2")`, stdout = joinpath(tmp, f)))
+            end
+        end
+        model = read_model(joinpath(tmp, "diamond"))
+        win = read_win(joinpath(tmp, "diamond.win"))
+        result = run_wannier(model, win)
+        out = write_rmn(joinpath(tmp, "diamond"), model, result.Mrot)
+        lines = readlines(out)
+        @test strip(lines[2]) == "4"
+        @test strip(lines[3]) == "93"
+        @test length(lines) == 3 + 93 * 16
+    else
+        @test_skip false
+    end
+end
