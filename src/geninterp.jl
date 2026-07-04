@@ -11,13 +11,34 @@ function eig_deleig(bm::BerryModel, kfrac::AbstractVector; deriv::Bool=true)
     H = zeros(ComplexF64, nw, nw)
     dH = [zeros(ComplexF64, nw, nw) for _ in 1:3]
     kf = SVector{3,Float64}(kfrac...)
-    for ir in 1:length(bm.irvec)
-        fac = cis(TWOPI * dot(kf, SVector{3,Float64}(bm.irvec[ir]...))) / bm.ndegen[ir]
-        @views H .+= fac .* bm.Hr[:, :, ir]
-        if deriv
-            R = bm.Rcart[ir]
-            @views for c in 1:3
-                dH[c] .+= (fac * im * R[c]) .* bm.Hr[:, :, ir]
+    if bm.wsdist === nothing
+        for ir in 1:length(bm.irvec)
+            fac = cis(TWOPI * dot(kf, SVector{3,Float64}(bm.irvec[ir]...))) / bm.ndegen[ir]
+            @views H .+= fac .* bm.Hr[:, :, ir]
+            if deriv
+                R = bm.Rcart[ir]
+                @views for c in 1:3
+                    dH[c] .+= (fac * im * R[c]) .* bm.Hr[:, :, ir]
+                end
+            end
+        end
+    else
+        for ir in 1:length(bm.irvec)
+            nd0 = bm.ndegen[ir]
+            for j in 1:nw, i in 1:nw
+                dl = bm.wsdist[i, j, ir]
+                w = 1.0 / (nd0 * length(dl))
+                h = bm.Hr[i, j, ir]
+                for Rt in dl
+                    ph = w * cis(TWOPI * dot(kf, SVector{3,Float64}(Rt...)))
+                    H[i, j] += ph * h
+                    if deriv
+                        Rc = bm.lattice.A * SVector{3,Float64}(Rt...)
+                        for c in 1:3
+                            dH[c][i, j] += ph * im * Rc[c] * h
+                        end
+                    end
+                end
             end
         end
     end

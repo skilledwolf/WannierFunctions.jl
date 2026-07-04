@@ -38,7 +38,10 @@ struct BerryModel
     Rcart::Vector{SVector{3,Float64}}
     Hr::Array{ComplexF64,3}            # (nw, nw, nr)
     Ar::Array{ComplexF64,4}            # (nw, nw, nr, 3)
+    # use_ws_distance (postw90 default): per-(i,j,R) minimal-image R-vectors and degeneracy
+    wsdist::Union{Nothing,Array{Vector{NTuple{3,Int}},3}}
 end
+BerryModel(lat, irvec, nd, Rc, Hr, Ar) = BerryModel(lat, irvec, nd, Rc, Hr, Ar, nothing)
 
 num_wann(b::BerryModel) = size(b.Hr, 1)
 
@@ -60,7 +63,7 @@ geometry (from the `.mmn` connectivity, so slot order matches `chk.m_matrix`).
 - Both transformed with `O(R) = (1/N_q) Σ_q e^{−i2πq·R} O(q)` on the Wigner–Seitz R-set.
 """
 function BerryModel(chk::Checkpoint, eig::Matrix{Float64}, bv::Union{Nothing,BVectors},
-                    kgrid::KGrid, lattice::Lattice)
+                    kgrid::KGrid, lattice::Lattice; use_ws_distance::Bool=false)
     nw = num_wann(chk)
     nk = nkpt(kgrid)
     nb = num_bands(chk)
@@ -107,7 +110,9 @@ function BerryModel(chk::Checkpoint, eig::Matrix{Float64}, bv::Union{Nothing,BVe
         end
     end
     Rcart = [lattice.A * SVector{3,Float64}(r...) for r in irvec]
-    return BerryModel(lattice, irvec, ndegen, Rcart, Hr, Ar)
+    ws = use_ws_distance ?
+         ws_translate_dist(irvec, chk.centres, lattice, kgrid.mp_grid) : nothing
+    return BerryModel(lattice, irvec, ndegen, Rcart, Hr, Ar, ws)
 end
 
 """
@@ -126,11 +131,11 @@ function BerryModel(seedname::AbstractString)
     if isfile(seedname * ".mmn")
         _, kpb, gpb, _, nk, _ = read_mmn(seedname * ".mmn")
         bv = build_bvectors(kgrid, lattice, kpb, gpb; kmesh_tol=win.kmesh_tol)
-        return BerryModel(chk, eig, bv, kgrid, lattice)
+        return BerryModel(chk, eig, bv, kgrid, lattice; use_ws_distance=win.use_ws_distance)
     end
     # H(R)-only model (no .mmn): enough for DOS, geninterp, band velocities, BoltzWann.
     # Berry-connection quantities (AHC, Kubo, morb) will error on the empty A(R).
-    return BerryModel(chk, eig, nothing, kgrid, lattice)
+    return BerryModel(chk, eig, nothing, kgrid, lattice; use_ws_distance=win.use_ws_distance)
 end
 
 "Interpolated k-space data shared by all Fermi levels at one k: E, U, A, Ω̄, rotated velocity."
@@ -141,21 +146,53 @@ function _berry_kdata(bm::BerryModel, kfrac::AbstractVector)
     A = [zeros(ComplexF64, nw, nw) for _ in 1:3]
     Ω̄ = [zeros(ComplexF64, nw, nw) for _ in 1:3]
     kf = SVector{3,Float64}(kfrac...)
-    for ir in 1:length(bm.irvec)
-        fac = cis(TWOPI * dot(kf, SVector{3,Float64}(bm.irvec[ir]...))) / bm.ndegen[ir]
-        R = bm.Rcart[ir]
-        @views H .+= fac .* bm.Hr[:, :, ir]
-        @views for c in 1:3
-            dH[c] .+= (fac * im * R[c]) .* bm.Hr[:, :, ir]
-        end
-        if size(bm.Ar, 4) == 3
+    if bm.wsdist === nothing
+        for ir in 1:length(bm.irvec)
+            fac = cis(TWOPI * dot(kf, SVector{3,Float64}(bm.irvec[ir]...))) / bm.ndegen[ir]
+            R = bm.Rcart[ir]
+            @views H .+= fac .* bm.Hr[:, :, ir]
             @views for c in 1:3
-                A[c] .+= fac .* bm.Ar[:, :, ir, c]
+                dH[c] .+= (fac * im * R[c]) .* bm.Hr[:, :, ir]
             end
-            # Ω̄_i = Σ_R e^{ikR} i (R_α A_β − R_β A_α)
-            @views for i in 1:3
-                α, β = ALPHA_A[i], BETA_A[i]
-                Ω̄[i] .+= (fac * im) .* (R[α] .* bm.Ar[:, :, ir, β] .- R[β] .* bm.Ar[:, :, ir, α])
+            if size(bm.Ar, 4) == 3
+                @views for c in 1:3
+                    A[c] .+= fac .* bm.Ar[:, :, ir, c]
+                end
+                # Ω̄_i = Σ_R e^{ikR} i (R_α A_β − R_β A_α)
+                @views for i in 1:3
+                    α, β = ALPHA_A[i], BETA_A[i]
+                    Ω̄[i] .+= (fac * im) .* (R[α] .* bm.Ar[:, :, ir, β] .- R[β] .* bm.Ar[:, :, ir, α])
+                end
+            end
+        end
+    else
+        # use_ws_distance: per-pair minimal-image phases; derivative and curl carry the
+        # SHIFTED Cartesian R (pw90common_fourier_R_to_k_new / _vec ws branches).
+        withA = size(bm.Ar, 4) == 3
+        for ir in 1:length(bm.irvec)
+            nd0 = bm.ndegen[ir]
+            for j in 1:nw, i in 1:nw
+                dl = bm.wsdist[i, j, ir]
+                w = 1.0 / (nd0 * length(dl))
+                for Rt in dl
+                    ph = w * cis(TWOPI * dot(kf, SVector{3,Float64}(Rt...)))
+                    Rc = bm.lattice.A * SVector{3,Float64}(Rt...)
+                    h = bm.Hr[i, j, ir]
+                    H[i, j] += ph * h
+                    for c in 1:3
+                        dH[c][i, j] += ph * im * Rc[c] * h
+                    end
+                    if withA
+                        for c in 1:3
+                            A[c][i, j] += ph * bm.Ar[i, j, ir, c]
+                        end
+                        for c in 1:3
+                            α, β = ALPHA_A[c], BETA_A[c]
+                            Ω̄[c][i, j] += ph * im * (Rc[α] * bm.Ar[i, j, ir, β] -
+                                                      Rc[β] * bm.Ar[i, j, ir, α])
+                        end
+                    end
+                end
             end
         end
     end
