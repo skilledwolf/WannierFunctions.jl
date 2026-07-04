@@ -24,6 +24,8 @@ include("interpolate.jl")
 include("disentangle.jl")
 include("pipeline.jl")
 include("output.jl")
+include("wout.jl")
+include("cli.jl")
 
 export Lattice, KGrid, BVectors, Model
 export read_win, read_amn, read_mmn, read_eig
@@ -33,6 +35,7 @@ export disentangle, DisentangleResult, WindowData
 export run_wannier, WannierResult, interpolate
 export wigner_seitz, build_hr, interpolate_hk, interpolate_bands
 export write_hr, read_hr, write_tb, write_band_dat, write_band_kpt, write_labelinfo
+export write_wout, generate_kpath, main
 
 """
     read_model(seedname) -> Model

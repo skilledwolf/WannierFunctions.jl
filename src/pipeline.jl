@@ -16,6 +16,7 @@ struct WannierResult
     disentangled::Bool
     omega_I::Float64
     niter::Int
+    dis::Union{Nothing,DisentangleResult}
 end
 
 """
@@ -28,10 +29,10 @@ function run_wannier(model::Model, win::WinInput; verbose::Bool=false)
     if model.num_bands > model.num_wann
         dis = disentangle(model, win; verbose=verbose)
         res = localize(dis.U0, dis.Mrot0, model.bvectors; num_iter=win.num_iter, verbose=verbose)
-        return WannierResult(res.U, dis.eigval_opt, res.spread, true, dis.omega_I, res.niter)
+        return WannierResult(res.U, dis.eigval_opt, res.spread, true, dis.omega_I, res.niter, dis)
     else
         res = wannierise(model; num_iter=win.num_iter, verbose=verbose)
-        return WannierResult(res.U, model.eig, res.spread, false, res.spread.ΩI, res.niter)
+        return WannierResult(res.U, model.eig, res.spread, false, res.spread.ΩI, res.niter, nothing)
     end
 end
 

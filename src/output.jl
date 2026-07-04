@@ -153,13 +153,15 @@ function write_tb(path::AbstractString, lattice, num_wann::Integer,
     A = lattice.A          # columns are a_1,a_2,a_3 (Å)
     open(path, "w") do io
         println(io, " ", header)
-        # a_1, a_2, a_3 (each is a column of A). List-directed E-format-ish output;
-        # reference uses write(*,*) which prints full precision. Use E15.8-style.
+        # a_1, a_2, a_3 (each is a column of A). The reference writes these
+        # list-directed (`write(*,*) real_lattice(k,:)`) at full ~17-sig-fig
+        # precision, NOT E15.8. gfortran right-justifies each value in a 21-char
+        # field (sign slot + 0.16f), joins with 8 spaces, trailing 5 spaces —
+        # matched byte-for-byte against the oracle _tb.dat.
+        fld(v) = lpad(@sprintf("%.16f", v), 21)
         for k in 1:3
-            @printf(io, "  %s  %s  %s\n",
-                    fortran_e(A[1, k], 15, 8),
-                    fortran_e(A[2, k], 15, 8),
-                    fortran_e(A[3, k], 15, 8))
+            println(io, fld(A[1, k]) * "        " * fld(A[2, k]) *
+                        "        " * fld(A[3, k]) * "     ")
         end
         println(io, "          ", num_wann)
         println(io, "          ", nrpts)
@@ -174,7 +176,9 @@ function write_tb(path::AbstractString, lattice, num_wann::Integer,
             @printf(io, "%5d%5d%5d\n", R1, R2, R3)
             for i in 1:num_wann, j in 1:num_wann
                 h = Hr[j, i, irpt]
-                @printf(io, "%5d%5d   %s %s \n", j, i,
+                # '(2I5,3x,2(E15.8,1x))': one 1x between the two values; the trailing
+                # 1x is suppressed by gfortran (no trailing space on the record).
+                @printf(io, "%5d%5d   %s %s\n", j, i,
                         fortran_e(real(h), 15, 8), fortran_e(imag(h), 15, 8))
             end
         end
@@ -186,7 +190,8 @@ function write_tb(path::AbstractString, lattice, num_wann::Integer,
             @printf(io, "%5d%5d%5d\n", R1, R2, R3)
             for i in 1:num_wann, j in 1:num_wann
                 z = fortran_e(0.0, 15, 8)
-                @printf(io, "%5d%5d   %s %s %s %s %s %s \n", j, i,
+                # '(2I5,3x,6(E15.8,1x))': single 1x between values; trailing 1x suppressed.
+                @printf(io, "%5d%5d   %s %s %s %s %s %s\n", j, i,
                         z, z, z, z, z, z)
             end
         end
@@ -201,7 +206,9 @@ end
     write_band_dat(path, xvals, energies)
 
 Write `seedname_band.dat`. `energies` is (nb × nk). For each band b, for each
-k-point, a line `(2E16.8)` = xval energy, with a blank line between bands.
+k-point, a line `(2E16.8)` = xval energy. The reference emits `write(*,*) ' '`
+after **every** band (including the last), so a trailing blank line ` ` is
+written after each band's block (verified against the reference `_band.dat`).
 """
 function write_band_dat(path::AbstractString, xvals::AbstractVector,
                         energies::AbstractMatrix)
@@ -214,7 +221,7 @@ function write_band_dat(path::AbstractString, xvals::AbstractVector,
                 print(io, fortran_e(xvals[k], 16, 8),
                           fortran_e(energies[b, k], 16, 8), "\n")
             end
-            b < nb && print(io, " \n")         # blank line between bands
+            print(io, " \n")                   # blank line after every band (incl. last)
         end
     end
     return path

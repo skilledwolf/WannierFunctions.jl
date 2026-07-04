@@ -97,6 +97,44 @@ function interpolate_hk(Hr::Array{ComplexF64,3}, irvec::Vector{NTuple{3,Int}},
 end
 
 """
+    generate_kpath(win, lattice; bands_num_points=100) -> (kpts, xvals, labels, label_idx)
+
+Sample the `kpoint_path` block of a `.win` in segment mode: each segment gets a point count
+proportional to its length (the first segment gets `bands_num_points`), linearly interpolated in
+fractional coordinates. `xvals` is the cumulative Cartesian path length (Å⁻¹). `labels`/`label_idx`
+mark the special points for axis ticks.
+"""
+function generate_kpath(win::WinInput, lattice::Lattice; bands_num_points::Int=100)
+    haskey(win.blocks, "kpoint_path") || return (SVector{3,Float64}[], Float64[], String[], Int[])
+    segs = Tuple{String,SVector{3,Float64},String,SVector{3,Float64}}[]
+    for ln in win.blocks["kpoint_path"]
+        t = split(ln)
+        length(t) >= 8 || continue
+        push!(segs, (String(t[1]), SVector{3,Float64}(parse_f64.(t[2:4])...),
+                     String(t[5]), SVector{3,Float64}(parse_f64.(t[6:8])...)))
+    end
+    isempty(segs) && return (SVector{3,Float64}[], Float64[], String[], Int[])
+    seglen = [norm(lattice.B * (s[4] - s[2])) for s in segs]
+    base = seglen[1] > 0 ? seglen[1] : 1.0
+    npts = [max(1, round(Int, bands_num_points * l / base)) for l in seglen]
+
+    kpts = SVector{3,Float64}[]; xvals = Float64[]; labels = String[]; lidx = Int[]
+    x = 0.0
+    for (i, s) in enumerate(segs)
+        push!(labels, s[1]); push!(lidx, length(kpts) + 1)
+        for j in 0:npts[i]-1
+            f = j / npts[i]
+            push!(kpts, s[2] + (s[4] - s[2]) * f)
+            push!(xvals, x + seglen[i] * f)
+        end
+        x += seglen[i]
+    end
+    push!(kpts, segs[end][4]); push!(xvals, x)
+    push!(labels, segs[end][3]); push!(lidx, length(kpts))
+    return kpts, xvals, labels, lidx
+end
+
+"""
     interpolate_bands(Hr, irvec, ndegen, kpts) -> eigs
 
 Interpolated band energies (num_wann × npts, ascending per column) at fractional k-points `kpts`.
