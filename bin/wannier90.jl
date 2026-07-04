@@ -17,12 +17,8 @@ end
 
 using Wannier90
 
-args = copy(ARGS)
-pp = false
-filter!(args) do a
-    a in ("-pp", "--pp", "-postproc") && (pp = true; return false)
-    return true
-end
+pp = any(a -> a in ("-pp", "--pp", "-postproc"), ARGS)
+args = [a for a in ARGS if !(a in ("-pp", "--pp", "-postproc"))]
 if isempty(args)
     println(stderr, "usage: wannier90.jl [-pp] <seedname>")
     exit(1)
