@@ -60,8 +60,13 @@ the multi-shell B1 weight solve on a synthetic tetragonal mesh (two shells, comp
 1e-16), the `use_ws_distance` grid invariant, k-path discontinuity handling, optimizer parity,
 and the operator-API invariants — **250 tests**, passing identically at 1 and 8 threads.
 
-Not yet implemented: the Γ-only real-gauge minimiser, `.chk` interchange, guiding-centre branch
-selection, spinors, and `postw90.x` post-processing — see the roadmap.
+**Checkpoint interchange works in both directions**: we read `wannier90.x`-written `.chk` files
+exactly, and `wannier90.x restart=plot` consumes ours — for the disentangled silicon case it
+reproduces its own band structure to 1e-6 eV from our checkpoint. The CLI writes `seedname.chk`
+after every run, so `postw90.x` can post-process our results directly.
+
+Not yet implemented: the Γ-only real-gauge minimiser, guiding-centre branch selection, spinors,
+WF plotting, and `postw90.x` post-processing — see the roadmap.
 
 ## Installation
 
@@ -139,9 +144,9 @@ interface (pw2wannier90 etc.) — byte-identical to `wannier90.x -pp` output. Th
 
 ## Roadmap
 
-- **`.chk` / `.chk.fmt` interchange** for full-precision round-tripping with `wannier90.x`.
 - Γ-only (real-gauge) minimiser path (a distinct algorithm from the general complex minimiser).
-- `guiding_centres` branch selection; spinor projections.
+- `guiding_centres` branch selection; spinor projections; Wannier-function plotting (UNK → cube/xsf).
+- `.chk.fmt` (formatted transport variant of the checkpoint; the binary `.chk` is supported).
 - Berry-phase observables on top of `TBOperator` (the position operator is already in place).
 - Projectability-based (`dis_froz_proj`) and symmetry-adapted (SAWF) variants; `postw90.x`
   post-processing (BoltzWann, AHC, …) is out of scope for the core.
