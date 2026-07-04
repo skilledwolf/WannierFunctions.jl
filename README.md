@@ -157,15 +157,24 @@ the file's e13.5 precision, including the global phase convention.
 
 ## Post-processing: Berry curvature and the anomalous Hall conductivity
 
-The first slice of `postw90.x` functionality is implemented on the operator layer
-(`berry_task = ahc`): `BerryModel(seedname)` consumes any completed run (checkpoint + `.eig` +
-`.mmn`), builds H(R) and the Berry connection A(R) with the exact postw90 conventions, and
-`anomalous_hall(bm; fermi_energy, kmesh)` integrates the occupied-manifold Berry curvature
-(WYSV J0/J1/J2 decomposition). Validated on the bcc-Fe reference case — spinor, 28 bands
-disentangled to 18 WFs — reproducing `postw90.x` **to every printed digit**:
-σ = (0.0334, 0.0572, 1222.1510) S/cm on the benchmark 10³ mesh, in under a second on 8 threads.
-A time-reversal-symmetric insulator (diamond) integrates to zero as it must. The CLI honours
-`berry = true` / `berry_task = ahc` / `berry_kmesh` / `fermi_energy` from the `.win`.
+A substantial slice of `postw90.x` lives on the operator layer, all validated against a
+locally built `postw90.x` on the bcc-Fe reference case (spinor, 28 bands disentangled to 18 WFs):
+
+- **AHC** (`anomalous_hall`): occupied-manifold Berry curvature (WYSV J0/J1/J2), reproducing
+  the benchmark **to every printed digit** — σ = (0.0334, 0.0572, 1222.1510) S/cm on the 10³
+  mesh, under a second on 8 threads. Diamond (time-reversal symmetric) integrates to zero.
+- **Adaptive refinement + Fermi scans** (`ahc_fermiscan`): postw90's exact
+  curvature-triggered sub-mesh algorithm; all 11 Fermi levels × 3 components of the
+  `adaptandfermi` test match the oracle to 5e-7 S/cm.
+- **Kubo optical conductivity + JDOS** (`optical_conductivity`): interband σ^H/σ^AH with
+  adaptive smearing; Fe benchmark files match at their E16.8 precision.
+- **Orbital magnetisation** (`orbital_magnetisation`): `.uHu` reader, the H-weighted position
+  operators B(R)/C(R), and the LVTS12 g/h trace formulas — Fe gives M = (0, 0, 0.0431) μ_B/cell,
+  the benchmark value.
+- **geninterp**: band energies + velocities at arbitrary k-lists, matching the oracle to 2e-10.
+
+The CLI honours `berry = true` / `berry_task = ahc` / `berry_kmesh` / `fermi_energy` from the
+`.win`.
 
 **SCDM automatic projections**: `scdm_projections(model; dir)` computes initial projections
 directly from the UNK wavefunctions (QRCP column selection, isolated/erfc/gaussian smearing) —
@@ -177,8 +186,7 @@ against `w90chk2chk.x` conversions.
 
 ## Roadmap
 
-- More postw90 surface on the same layer: orbital magnetisation, spin Hall, optical (Kubo),
-  Boltzmann transport; adaptive k-mesh refinement.
+- Remaining postw90 surface: spin Hall (needs `.spn`), Boltzmann transport, DOS, k-slices.
 - `guiding_centres` branch selection; Γ-only real-orthogonal parity mode; `.cube` plot output.
 - Berry-phase observables on top of `TBOperator` (the position operator is already in place).
 - Projectability-based (`dis_froz_proj`) and symmetry-adapted (SAWF) variants; `postw90.x`

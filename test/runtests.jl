@@ -785,3 +785,35 @@ end
         @test_skip false
     end
 end
+
+# =========================================================================
+# (15) KUBO OPTICAL CONDUCTIVITY + ORBITAL MAGNETISATION (Fe oracle values)
+# =========================================================================
+@testset "Kubo + orbital magnetisation" begin
+    kd = joinpath(REFROOT, "testpostw90_fe_kubo_Axy")
+    if isfile(joinpath(kd, "Fe.uHu.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = mktempdir()
+        for f in ("Fe.win", "Fe.eig")
+            cp(joinpath(kd, f), joinpath(tmp, f); follow_symlinks = true)
+        end
+        for f in ("Fe.chk.fmt", "Fe.mmn", "Fe.uHu")
+            run(pipeline(`bunzip2 -kc $(joinpath(kd, f * ".bz2"))`, stdout = joinpath(tmp, f)))
+        end
+        bm = BerryModel(joinpath(tmp, "Fe"))
+        res = optical_conductivity(bm; fermi_energy = 12.6279, kmesh = (10, 10, 10),
+                                   freqs = 0.0:0.5:7.0, eigval_max = 30.0 + 2.0 / 3.0)
+        # postw90 oracle values (Fe-kubo_A_xy.dat / Fe-jdos.dat, 10³ mesh)
+        @test real(kubo_A(res, 1, 2, 1)) ≈ 304.66638 atol = 1e-2      # ω=0, Re σ_A,xy
+        @test real(kubo_A(res, 1, 2, 2)) ≈ 119.20666 atol = 1e-2      # ω=0.5
+        @test imag(kubo_A(res, 1, 2, 2)) ≈ 156.15522 atol = 1e-2
+        @test abs(imag(kubo_A(res, 1, 2, 1))) < 1e-8                   # Im σ_A(ω=0) = 0
+        # morb: same staged data
+        mm = MorbModel(joinpath(tmp, "Fe"))
+        M = orbital_magnetisation(mm; fermi_energy = 12.6279, kmesh = (10, 10, 10))
+        @test abs(M[1]) < 1e-3
+        @test abs(M[2]) < 1e-3
+        @test M[3] ≈ 0.0431 atol = 1e-3                                # benchmark, μ_B/cell
+    else
+        @test_skip false
+    end
+end
