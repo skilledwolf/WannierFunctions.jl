@@ -9,3 +9,6 @@ scratch/
 examples/data/*_band.*
 examples/data/*.wout
 examples/data/silicon.*
+docs/build/
+docs/src/index.md
+docs/Manifest.toml
