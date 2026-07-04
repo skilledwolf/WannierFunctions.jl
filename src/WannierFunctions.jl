@@ -31,6 +31,7 @@ include("chk.jl")
 include("plot.jl")
 include("scdm.jl")
 include("berry.jl")
+include("geninterp.jl")
 include("wout.jl")
 include("cli.jl")
 include("show.jl")
@@ -50,6 +51,7 @@ export Checkpoint, read_chk, write_chk, read_chk_fmt, write_chk_fmt
 export read_unk, plot_wannier_functions, write_xsf, parse_range_list
 export scdm_projections, write_amn
 export BerryModel, berry_curvature_k, anomalous_hall, ahc_fermiscan
+export geninterp, eig_deleig, read_geninterp_kpt
 export TBOperator, hamiltonian_operator, position_operator, bands, fourier_to_R
 
 """

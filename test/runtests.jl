@@ -734,3 +734,52 @@ end
         @test_skip false
     end
 end
+
+# =========================================================================
+# (14) ADAPTIVE AHC FERMISCAN + GENINTERP
+# =========================================================================
+@testset "Adaptive fermiscan + geninterp" begin
+    fed = joinpath(REFROOT, "testpostw90_fe_ahc_adaptandfermi")
+    if isfile(joinpath(fed, "Fe.chk.fmt.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = mktempdir()
+        for f in ("Fe.win", "Fe.eig")
+            cp(joinpath(fed, f), joinpath(tmp, f))
+        end
+        run(pipeline(`bunzip2 -kc $(joinpath(fed, "Fe.chk.fmt.bz2"))`, stdout = joinpath(tmp, "Fe.chk.fmt")))
+        run(pipeline(`bunzip2 -kc $(joinpath(fed, "Fe.mmn.bz2"))`, stdout = joinpath(tmp, "Fe.mmn")))
+        bm = BerryModel(joinpath(tmp, "Fe"))
+        # two Fermi levels, small mesh, adaptive on: consistency + reproducibility
+        out = ahc_fermiscan(bm; fermi_energies = [12.4279, 12.6279], kmesh = (4, 4, 4),
+                            adpt_kmesh = 3, adpt_thresh = 10.0)
+        @test size(out) == (3, 2)
+        @test all(isfinite, out)
+        # single-level entry point must agree with the scan's column
+        one = anomalous_hall(bm; fermi_energy = 12.6279, kmesh = (4, 4, 4))
+        scan = ahc_fermiscan(bm; fermi_energies = [12.6279], kmesh = (4, 4, 4))
+        @test maximum(abs.(one .- scan[:, 1])) < 1e-10
+    else
+        @test_skip false
+    end
+
+    gid = joinpath(REFROOT, "testpostw90_si_geninterp")
+    if isfile(joinpath(gid, "silicon.chk.fmt.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = mktempdir()
+        for f in ("silicon.win", "silicon.eig", "silicon_geninterp.kpt")
+            cp(joinpath(gid, f), joinpath(tmp, f))
+        end
+        run(pipeline(`bunzip2 -kc $(joinpath(gid, "silicon.chk.fmt.bz2"))`, stdout = joinpath(tmp, "silicon.chk.fmt")))
+        run(pipeline(`bunzip2 -kc $(joinpath(gid, "silicon.mmn.bz2"))`, stdout = joinpath(tmp, "silicon.mmn")))
+        bm = BerryModel(joinpath(tmp, "silicon"))
+        out = geninterp(bm, joinpath(tmp, "silicon"))
+        @test isfile(out)
+        rows = [parse.(Float64, split(l)) for l in eachline(out) if !startswith(l, "#")]
+        @test length(rows) == 24                              # 3 k-points × 8 bands
+        # velocity check: dE/dk at k and −k must be opposite (time reversal, no SOC here)
+        E1, dE1 = eig_deleig(bm, [0.1, 0.2, 0.3])
+        E2, dE2 = eig_deleig(bm, [-0.1, -0.2, -0.3])
+        @test E1 ≈ E2 atol = 1e-9
+        @test dE1 ≈ -dE2 atol = 1e-8
+    else
+        @test_skip false
+    end
+end
