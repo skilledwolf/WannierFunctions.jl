@@ -54,11 +54,14 @@ Base.show(io::IO, ::MIME"text/plain", m::MorbModel) =
     print(io, "MorbModel: ", num_wann(m.bm), " WF, ", length(m.bm.irvec), " R-vectors (H, A, B, C)")
 
 """
-    MorbModel(seedname) -> MorbModel
+    MorbModel(seedname; transl_inv_full=false) -> MorbModel
 
-Assemble from `seedname.{win,mmn,eig,chk,uHu}` (formatted `.uHu`).
+Assemble from `seedname.{win,mmn,eig,chk,uHu}` (formatted `.uHu`). With
+`transl_inv_full = true`, A(R), B(R) and C(R) use the one-shell translation-invariant scheme
+(e^{ib·r₀} phases, canonical b-slots on the expanded minimal-image R-set with e^{−ib·R̃/2},
+plus the H-weighted correction terms of get_oper.F90; C(R) is then NOT Hermitian-paired).
 """
-function MorbModel(seedname::AbstractString)
+function MorbModel(seedname::AbstractString; transl_inv_full::Bool=false)
     win = read_win(seedname * ".win")
     chk = isfile(seedname * ".chk") ? read_chk(seedname * ".chk") :
           read_chk_fmt(seedname * ".chk.fmt")
@@ -67,68 +70,144 @@ function MorbModel(seedname::AbstractString)
     lattice = Lattice(win.unit_cell)
     kgrid = KGrid(win.kpoints, win.mp_grid)
     bv = build_bvectors(kgrid, lattice, kpb, gpb; kmesh_tol=win.kmesh_tol)
-    bm = BerryModel(chk, eig, bv, kgrid, lattice)
+    bm = BerryModel(chk, eig, bv, kgrid, lattice; use_ws_distance=win.use_ws_distance,
+                    transl_inv_full=transl_inv_full)
     uhu = read_uhu(seedname * ".uHu"; num_bands=nb, num_kpts=nk, nntot=nntot)
 
     nw = num_wann(chk)
-    # windowed v(q) = U_opt·U on the window rows, and the window band indices per q
-    vs = Vector{Matrix{ComplexF64}}(undef, nk)
-    winidx = Vector{Vector{Int}}(undef, nk)
-    for q in 1:nk
-        if chk.have_disentangled
-            nd = chk.ndimwin[q]
-            vs[q] = chk.u_matrix_opt[1:nd, :, q] * chk.u_matrix[:, :, q]
-            winidx[q] = findall(@view chk.lwindow[:, q])
-        else
-            vs[q] = chk.u_matrix[:, :, q]
-            winidx[q] = collect(1:nb)
+    vs, winidx = gauge_v_windows(chk, nb)
+    nr = length(bm.irvec)
+
+    if !transl_inv_full
+        # B_a(q) = i Σ_b w_b b_a V(q)† diag(ε_win(q)) S_o(win_q, win_qb) V(q+b)
+        Bq = zeros(ComplexF64, nw, nw, nk, 3)
+        for q in 1:nk
+            εw = eig[winidx[q], q]
+            for b in 1:nntot
+                qb = kpb[b, q]
+                S = M[winidx[q], winidx[qb], b, q]
+                core = vs[q]' * (Diagonal(εw) * S) * vs[qb]
+                w = bv.wb[b, q]
+                for a in 1:3
+                    @views Bq[:, :, q, a] .+= (im * w * bv.bvec[a, b, q]) .* core
+                end
+            end
         end
+
+        # C_ab(q) = Σ_{b1,b2} w_b1 b1_a w_b2 b2_b V(q+b1)† uHu(b1,b2) V(q+b2), a ≤ b then
+        # Hermitian completion.
+        Cq = zeros(ComplexF64, nw, nw, nk, 3, 3)
+        for q in 1:nk, b2 in 1:nntot, b1 in 1:nntot
+            qb1, qb2 = kpb[b1, q], kpb[b2, q]
+            core = vs[qb1]' * uhu[winidx[qb1], winidx[qb2], b1, b2, q] * vs[qb2]
+            for b in 1:3, a in 1:b
+                fac = bv.wb[b1, q] * bv.bvec[a, b1, q] * bv.wb[b2, q] * bv.bvec[b, b2, q]
+                @views Cq[:, :, q, a, b] .+= fac .* core
+            end
+        end
+        for q in 1:nk, b in 1:3, a in 1:b-1
+            @views Cq[:, :, q, b, a] .= (Cq[:, :, q, a, b])'
+        end
+
+        # q → R on the Wigner–Seitz set
+        Br = zeros(ComplexF64, nw, nw, nr, 3)
+        Cr = zeros(ComplexF64, nw, nw, nr, 3, 3)
+        Threads.@threads for ir in 1:nr
+            R = SVector{3,Float64}(bm.irvec[ir]...)
+            for q in 1:nk
+                fac = cis(-TWOPI * dot(kgrid.frac[q], R)) / nk
+                @views for a in 1:3
+                    Br[:, :, ir, a] .+= fac .* Bq[:, :, q, a]
+                    for b in 1:3
+                        Cr[:, :, ir, a, b] .+= fac .* Cq[:, :, q, a, b]
+                    end
+                end
+            end
+        end
+        return MorbModel(bm, Br, Cr)
     end
 
-    # B_a(q) = i Σ_b w_b b_a V(q)† diag(ε_win(q)) S_o(win_q, win_qb) V(q+b)
-    Bq = zeros(ComplexF64, nw, nw, nk, 3)
+    # ---- transl_inv_full: bm lives on the expanded R-set (pre-divided convention) ----
+    irvec, ndegen = wigner_seitz(lattice, kgrid.mp_grid)
+    ws0 = win.use_ws_distance ?
+          ws_translate_dist(irvec, chk.centres, lattice, kgrid.mp_grid) : nothing
+    irvec90, idx90 = _pw90_rset(irvec, ws0)
+    @assert irvec90 == bm.irvec
+    r0 = [(chk.centres[a, i] + chk.centres[a, j]) / 2 for i in 1:nw, j in 1:nw, a in 1:3]
+    slot = _bvec_canonical_slots(bv)
+    ph1 = (bb, i, j) -> cis(bb[1] * r0[i, j, 1] + bb[2] * r0[i, j, 2] + bb[3] * r0[i, j, 3])
+    bk1 = b0 -> SVector(bv.bvec[1, b0, 1], bv.bvec[2, b0, 1], bv.bvec[3, b0, 1])
+
+    # Expanded-set H(R) for the corrections (same convention as bm.Hr)
+    Hr90 = bm.Hr
+
+    # B: slot-resolved accumulation with e^{ib·r₀}, per-slot scatter + e^{−ib·R̃/2},
+    # then B(R̃) += (r₀_a − R̃_a/2)·H(R̃)
+    Bq_b = zeros(ComplexF64, nw, nw, nk, nntot, 3)
     for q in 1:nk
         εw = eig[winidx[q], q]
         for b in 1:nntot
             qb = kpb[b, q]
-            S = M[winidx[q], winidx[qb], b, q]
-            core = vs[q]' * (Diagonal(εw) * S) * vs[qb]
+            bb = SVector(bv.bvec[1, b, q], bv.bvec[2, b, q], bv.bvec[3, b, q])
+            b0 = slot[b, q]
+            core = vs[q]' * (Diagonal(εw) * M[winidx[q], winidx[qb], b, q]) * vs[qb]
             w = bv.wb[b, q]
-            for a in 1:3
-                @views Bq[:, :, q, a] .+= (im * w * bv.bvec[a, b, q]) .* core
-            end
-        end
-    end
-
-    # C_ab(q) = Σ_{b1,b2} w_b1 b1_a w_b2 b2_b V(q+b1)† uHu(b1,b2) V(q+b2), a ≤ b then
-    # Hermitian completion.
-    Cq = zeros(ComplexF64, nw, nw, nk, 3, 3)
-    for q in 1:nk, b2 in 1:nntot, b1 in 1:nntot
-        qb1, qb2 = kpb[b1, q], kpb[b2, q]
-        core = vs[qb1]' * uhu[winidx[qb1], winidx[qb2], b1, b2, q] * vs[qb2]
-        for b in 1:3, a in 1:b
-            fac = bv.wb[b1, q] * bv.bvec[a, b1, q] * bv.wb[b2, q] * bv.bvec[b, b2, q]
-            @views Cq[:, :, q, a, b] .+= fac .* core
-        end
-    end
-    for q in 1:nk, b in 1:3, a in 1:b-1
-        @views Cq[:, :, q, b, a] .= (Cq[:, :, q, a, b])'
-    end
-
-    # q → R on the Wigner–Seitz set
-    nr = length(bm.irvec)
-    Br = zeros(ComplexF64, nw, nw, nr, 3)
-    Cr = zeros(ComplexF64, nw, nw, nr, 3, 3)
-    Threads.@threads for ir in 1:nr
-        R = SVector{3,Float64}(bm.irvec[ir]...)
-        for q in 1:nk
-            fac = cis(-TWOPI * dot(kgrid.frac[q], R)) / nk
-            @views for a in 1:3
-                Br[:, :, ir, a] .+= fac .* Bq[:, :, q, a]
-                for b in 1:3
-                    Cr[:, :, ir, a, b] .+= fac .* Cq[:, :, q, a, b]
+            for j in 1:nw, i in 1:nw
+                c = im * w * ph1(bb, i, j) * core[i, j]
+                for a in 1:3
+                    Bq_b[i, j, q, b0, a] += bb[a] * c
                 end
             end
+        end
+    end
+    Br = zeros(ComplexF64, nw, nw, nr, 3)
+    for a in 1:3, b0 in 1:nntot
+        Xb = _scatter_ws(fourier_q_to_R((@view Bq_b[:, :, :, b0, a]), kgrid, irvec),
+                         irvec, ndegen, ws0, idx90, nr)
+        for ir in 1:nr
+            p2 = cis(-dot(bk1(b0), bm.Rcart[ir]) / 2)
+            @views Br[:, :, ir, a] .+= p2 .* Xb[:, :, ir]
+        end
+    end
+    for ir in 1:nr, a in 1:3, j in 1:nw, i in 1:nw
+        Br[i, j, ir, a] += (r0[i, j, a] - bm.Rcart[ir][a] / 2) * Hr90[i, j, ir]
+    end
+
+    # C: slot-pair accumulation (a ≤ b only) with e^{i(b₂−b₁)·r₀}, per-pair scatter with
+    # e^{−i(b₁+b₂)·R̃/2}, then the three correction terms (a > b filled only by these).
+    Cq_b = zeros(ComplexF64, nw, nw, nk, nntot, nntot, 3, 3)
+    for q in 1:nk, b2 in 1:nntot, b1 in 1:nntot
+        qb1, qb2 = kpb[b1, q], kpb[b2, q]
+        bb1 = SVector(bv.bvec[1, b1, q], bv.bvec[2, b1, q], bv.bvec[3, b1, q])
+        bb2 = SVector(bv.bvec[1, b2, q], bv.bvec[2, b2, q], bv.bvec[3, b2, q])
+        s1, s2 = slot[b1, q], slot[b2, q]
+        core = vs[qb1]' * uhu[winidx[qb1], winidx[qb2], b1, b2, q] * vs[qb2]
+        w12 = bv.wb[b1, q] * bv.wb[b2, q]
+        for j in 1:nw, i in 1:nw
+            c = w12 * ph1(bb2 - bb1, i, j) * core[i, j]
+            for b in 1:3, a in 1:b
+                Cq_b[i, j, q, s1, s2, a, b] += bb1[a] * bb2[b] * c
+            end
+        end
+    end
+    Cr = zeros(ComplexF64, nw, nw, nr, 3, 3)
+    for b in 1:3, a in 1:b, s2 in 1:nntot, s1 in 1:nntot
+        Xb = _scatter_ws(fourier_q_to_R((@view Cq_b[:, :, :, s1, s2, a, b]), kgrid, irvec),
+                         irvec, ndegen, ws0, idx90, nr)
+        bsum = bk1(s1) + bk1(s2)
+        for ir in 1:nr
+            p2 = cis(-dot(bsum, bm.Rcart[ir]) / 2)
+            @views Cr[:, :, ir, a, b] .+= p2 .* Xb[:, :, ir]
+        end
+    end
+    irneg = [get(idx90, (-r[1], -r[2], -r[3]), 0) for r in bm.irvec]
+    for ir in 1:nr, b in 1:3, a in 1:3
+        Rc = bm.Rcart[ir]
+        @views begin
+            Cr[:, :, ir, a, b] .+= (r0[:, :, a] .+ Rc[a] / 2) .* Br[:, :, ir, b]
+            irneg[ir] != 0 &&
+                (Cr[:, :, ir, a, b] .+= (Br[:, :, irneg[ir], a])' .* (r0[:, :, b] .- Rc[b] / 2))
+            Cr[:, :, ir, a, b] .+= ((r0[:, :, a] .+ Rc[a] / 2) .* Rc[b]) .* Hr90[:, :, ir]
         end
     end
     return MorbModel(bm, Br, Cr)
@@ -159,34 +238,38 @@ end
 
 "Per-k morb integrand: img + imh − 2E_F·imf (J0+J1+J2 summed), Wannier-gauge traces."
 function _morb_kdata(mm::MorbModel, kf::SVector{3,Float64}, ef::Float64)
+    imf, img, imh = _imfgh_kdata(mm, kf, ef)
+    return SVector((img .+ imh .- 2.0 * ef .* imf)...)
+end
+
+"Per-k LVTS12 trace triple (imf, img, imh), each the J0+J1+J2 sum per axial component."
+function _imfgh_kdata(mm::MorbModel, kf::SVector{3,Float64}, ef::Float64)
+    kd, H, B, C = _imfgh_setup(mm, kf)
+    return _imfgh_occ(kd, H, B, C, Float64.(kd.E .< ef))
+end
+
+"Interpolate everything the imfgh traces need at one k (shared across occupation choices)."
+function _imfgh_setup(mm::MorbModel, kf::SVector{3,Float64})
     bm = mm.bm
-    nw = num_wann(bm)
     kd = _berry_kdata(bm, kf)
+    H = kd.U * Diagonal(kd.E) * kd.U'
+    # _ft_op is Wigner–Seitz-distance aware (use_ws_distance), unlike a plain R-sum.
+    # All 9 C components are interpolated directly: with transl_inv_full C(R) is not
+    # Hermitian-paired, and in the plain case the stored components already are.
+    B = [_ft_op(bm, (@view mm.Br[:, :, :, a]), kf) for a in 1:3]
+    C = [_ft_op(bm, (@view mm.Cr[:, :, :, a, b]), kf) for a in 1:3, b in 1:3]
+    return kd, H, B, C
+end
+
+function _imfgh_occ(kd, H, B, C, occ::Vector{Float64})
     E, U = kd.E, kd.U
-    H = U * Diagonal(E) * U'
-
-    B = [zeros(ComplexF64, nw, nw) for _ in 1:3]
-    C = [zeros(ComplexF64, nw, nw) for _ in 1:3, _ in 1:3]
-    for ir in 1:length(bm.irvec)
-        fac = cis(TWOPI * dot(kf, SVector{3,Float64}(bm.irvec[ir]...))) / bm.ndegen[ir]
-        @views for a in 1:3
-            B[a] .+= fac .* mm.Br[:, :, ir, a]
-            for b in a:3
-                C[a, b] .+= fac .* mm.Cr[:, :, ir, a, b]
-            end
-        end
-    end
-    for b in 1:3, a in 1:b-1
-        C[b, a] = C[a, b]'
-    end
-
-    occ = Float64.(E .< ef)
+    nw = length(E)
     f = U * Diagonal(occ) * U'
     JJp = [zeros(ComplexF64, nw, nw) for _ in 1:3]
     JJm = [zeros(ComplexF64, nw, nw) for _ in 1:3]
     for c in 1:3
         for m in 1:nw, n in 1:nw
-            if E[n] > ef && E[m] < ef
+            if occ[n] < 0.5 && occ[m] > 0.5
                 JJp[c][n, m] = im * kd.dHh[c][n, m] / (E[m] - E[n])
                 JJm[c][m, n] = im * kd.dHh[c][m, n] / (E[n] - E[m])
             end
@@ -216,5 +299,5 @@ function _morb_kdata(mm::MorbModel, kf::SVector{3,Float64}, ef::Float64)
         img[i] += -2.0 * imag(tr((JJm[α] * H) * JJp[β]))
         imh[i] += -2.0 * imag(tr((H * JJm[α]) * JJp[β]))
     end
-    return SVector((img .+ imh .- 2.0 * ef .* imf)...)
+    return SVector(imf), SVector(img), SVector(imh)
 end

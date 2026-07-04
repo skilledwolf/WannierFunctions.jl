@@ -893,13 +893,168 @@ end
             run(pipeline(`bunzip2 -kc $(joinpath(kd2, f * ".bz2"))`, stdout = joinpath(tmp, f)))
         end
         bm = BerryModel(joinpath(tmp, "Fe"))
-        kp, co, ba, cu = kslice(bm; corner = [0.0, 0.0, 0.0], b1 = [0.5, -0.5, -0.5],
-                                b2 = [0.5, 0.5, 0.5], mesh = (5, 5),
-                                fermi_energy = 12.6279, curvature = true)
-        @test length(kp) == 36
-        @test ba[1, 1] ≈ 4.43414 atol = 1e-4       # oracle Fe-kslice-bands.dat first entries
-        @test ba[2, 1] ≈ 4.5557612 atol = 1e-4
-        @test cu[3, 2] ≈ -5.6272413 atol = 1e-4    # oracle curv z at point 2
+        ks = kslice(bm; corner = [0.0, 0.0, 0.0], b1 = [0.5, -0.5, -0.5],
+                    b2 = [0.5, 0.5, 0.5], mesh = (5, 5),
+                    fermi_energy = 12.6279, tasks = (:bands, :curv))
+        @test length(ks.kpts) == 36
+        @test ks.bands[1, 1] ≈ 4.43414 atol = 1e-4  # oracle Fe-kslice-bands.dat first entries
+        @test ks.bands[2, 1] ≈ 4.5557612 atol = 1e-4
+        @test ks.curv[3, 2] ≈ -5.6272413 atol = 1e-4    # oracle curv z at point 2
+    else
+        @test_skip false
+    end
+end
+
+@testset "spin + kpath + gyrotropic + Ryoo SHC + pdos" begin
+    # Stage a reference test dir into a tmpdir: plain files copied, .bz2 decompressed.
+    function stage(dir, plain, zipped)
+        tmp = mktempdir()
+        for f in plain
+            cp(joinpath(dir, f), joinpath(tmp, f); follow_symlinks = true)
+        end
+        for f in zipped
+            run(pipeline(`bunzip2 -kc $(joinpath(dir, f * ".bz2"))`, stdout = joinpath(tmp, f)))
+        end
+        tmp
+    end
+
+    # Spin moment + spin-decomposed DOS: Fe (spn is plain text here; no .mmn needed)
+    sd = joinpath(REFROOT, "testpostw90_fe_spin")
+    if isfile(joinpath(sd, "Fe.spn")) && Sys.which("bunzip2") !== nothing
+        tmp = stage(sd, ("Fe.win", "Fe.eig", "Fe.spn"), ("Fe.chk.fmt",))
+        sm = SpinModel(joinpath(tmp, "Fe"))
+        r = spin_moment(sm; fermi_energy = 12.6279, kmesh = (4, 4, 4))
+        @test r.moment[3] ≈ 3.090787 atol = 1e-4      # oracle wpout (tol 1e-3)
+        @test abs(r.moment[1]) < 1e-4
+        @test r.phi ≈ 5.831720 atol = 1e-2
+        es, dtot, dup, ddn = density_of_states(sm.bm; energies = range(10.0, 13.0; length = 16),
+                                               kmesh = (4, 4, 4), adaptive = false,
+                                               smr_width = 0.5, spin = sm, elec_per_state = 1)
+        @test dtot[1] ≈ 0.83154571 atol = 1e-4        # oracle Fe-dos.dat row 1
+        @test dup[1] ≈ 0.11547299 atol = 1e-4
+        @test ddn[1] ≈ 0.71607272 atol = 1e-4
+        @test maximum(abs.(dtot .- dup .- ddn)) < 1e-10
+    else
+        @test_skip false
+    end
+
+    # Projected DOS: copper d-manifold (WF 1:5)
+    pd = joinpath(REFROOT, "testpostw90_example04_pdos")
+    if isfile(joinpath(pd, "copper.chk.fmt.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = stage(pd, ("copper.win", "copper.eig"), ("copper.chk.fmt",))
+        bm = BerryModel(joinpath(tmp, "copper"))
+        es, d = density_of_states(bm; energies = range(8.0, 10.0; length = 9),
+                                  kmesh = (10, 10, 10), project = collect(1:5))
+        @test d[1] ≈ 1.6146066 atol = 1e-4            # oracle copper-dos.dat rows 1, 9
+        @test d[9] ≈ 2.8830387 atol = 1e-4
+    else
+        @test_skip false
+    end
+
+    # kpath: Fe bands+morb+curv (byte-level parity checked against staged oracle files in
+    # scratch/ during development; here spot values, incl. the xval construction)
+    kd = joinpath(REFROOT, "testpostw90_fe_kpathcurv")
+    if isfile(joinpath(kd, "Fe.uHu.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = stage(kd, ("Fe.win", "Fe.eig"), ("Fe.chk.fmt", "Fe.mmn", "Fe.uHu"))
+        mm = MorbModel(joinpath(tmp, "Fe"))
+        win = read_win(joinpath(tmp, "Fe.win"))
+        res = kpath(mm; segments = kpath_segments(win), num_points = 10,
+                    tasks = (:bands, :morb, :curv), fermi_energy = 12.6279)
+        @test length(res.kpts) == 20
+        @test res.xvals[2] ≈ 0.21892688 atol = 1e-7   # current-segment step
+        @test res.xvals[11] ≈ 2.1810044 atol = 1e-6   # vertex xval trap (NOT cumulative len)
+        @test res.bands[1, 1] ≈ 4.4341400 atol = 1e-4
+        @test res.curv[3, 3] ≈ -5.6272413 atol = 1e-3  # −Ω convention
+        @test res.morb[3, 1] ≈ 0.32522033 atol = 1e-3  # −(G+H−2E_F F)/2, eV·Å²
+    else
+        @test_skip false
+    end
+
+    # kpath SHC colouring: Pt (fixed smearing 1 eV, Å² band-resolved term)
+    pk = joinpath(REFROOT, "testpostw90_pt_kpathshc")
+    if isfile(joinpath(pk, "Pt.spn.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = stage(pk, ("Pt.win", "Pt.eig"), ("Pt.chk.fmt", "Pt.mmn", "Pt.spn"))
+        sm = ShcModel(joinpath(tmp, "Pt"))
+        win = read_win(joinpath(tmp, "Pt.win"))
+        res = kpath(sm; segments = kpath_segments(win), num_points = 10, tasks = (:shc,),
+                    fermi_energy = 17.9919, smr_width = 1.0, eigval_max = 30.6667)
+        @test length(res.shc) == 60
+        @test res.shc[1] ≈ 0.073385059 atol = 1e-4    # oracle Pt-shc.dat row 1 (tol 0.1)
+    else
+        @test_skip false
+    end
+
+    # Gyrotropic: Te, all tasks (oracle: five of six files byte-identical)
+    gd = joinpath(REFROOT, "testpostw90_te_gyrotropic")
+    if isfile(joinpath(gd, "Te.uHu.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = stage(gd, ("Te.win", "Te.eig", "Te.mmn"), ("Te.chk.fmt", "Te.uHu"))
+        mm = MorbModel(joinpath(tmp, "Te"))
+        res = gyrotropic(mm; tasks = (:D0, :Dw, :C, :K, :NOA, :dos),
+                         fermi_energies = [2.0, 4.0, 6.0, 8.0, 10.0], freqs = [0.0, 0.05, 0.1],
+                         kmesh = (5, 5, 5), smr_width = 0.1, degen_thresh = 0.001,
+                         box = [0.2 0.0 0.0; 0.0 0.2 0.0; 0.0 0.0 0.2],
+                         box_corner = [0.23333, 0.23333, 0.4], eigval_max = 8.6667)
+        @test res.C[1, 1, 1] ≈ 0.361959e1 rtol = 1e-4      # oracle C.dat, E_f=2
+        @test res.D[1, 1, 1] ≈ 0.472879e-2 rtol = 1e-4     # oracle D.dat
+        @test res.Dw[1, 1, 1, 1] ≈ 0.349534e-3 rtol = 1e-4 # oracle tildeD.dat, ω=0
+        @test res.K_orb[1, 1, 1] ≈ -0.825797e-7 rtol = 1e-4
+        @test res.NOA_orb[1, 1, 1, 1] ≈ -0.443840e2 rtol = 1e-4
+        @test res.dos[1] ≈ 0.277695e-3 rtol = 1e-4
+    else
+        @test_skip false
+    end
+
+    # Ryoo SHC (.sHu/.sIu) + transl_inv_full: Pt frequency scan
+    rd = joinpath(REFROOT, "testpostw90_pt_shc_ryoo")
+    if isfile(joinpath(rd, "Pt.sHu.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = stage(rd, ("Pt.win", "Pt.eig"),
+                    ("Pt.chk.fmt", "Pt.mmn", "Pt.spn", "Pt.sHu", "Pt.sIu"))
+        sm = ShcRyooModel(joinpath(tmp, "Pt"))
+        shc = shc_freqscan(sm; freqs = [0.0, 7.0], fermi_energy = 18.3823, kmesh = (9, 9, 9),
+                           γ = 1, α = 3, β = 2, adaptive = false, smr_width = 0.1,
+                           eigval_max = 1000.0)
+        @test real(shc[1]) ≈ -2576.0024 rtol = 1e-5        # oracle freqscan rows 1, 71
+        @test imag(shc[1]) ≈ 0.0 atol = 1e-9
+        @test real(shc[2]) ≈ -67.676662 rtol = 1e-4
+        @test imag(shc[2]) ≈ -377.14785 rtol = 1e-4
+    else
+        @test_skip false
+    end
+    rt = joinpath(REFROOT, "testpostw90_pt_shc_ryoo_transl_inv")
+    if isfile(joinpath(rt, "Pt.sHu.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = stage(rt, ("Pt.win", "Pt.eig"),
+                    ("Pt.chk.fmt", "Pt.mmn", "Pt.spn", "Pt.sHu", "Pt.sIu"))
+        sm = ShcRyooModel(joinpath(tmp, "Pt"); transl_inv_full = true)
+        shc = shc_freqscan(sm; freqs = [0.0], fermi_energy = 18.3823, kmesh = (9, 9, 9),
+                           γ = 1, α = 3, β = 2, adaptive = false, smr_width = 0.1,
+                           eigval_max = 1000.0)
+        @test real(shc[1]) ≈ -2130.4230 rtol = 1e-5        # transl_inv_full + ws_distance
+    else
+        @test_skip false
+    end
+
+    # GaAs ac-SHC: Qiao + frequency scan + scissors shift
+    ga = joinpath(REFROOT, "testpostw90_gaas_shc")
+    if isfile(joinpath(ga, "GaAs.spn.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = stage(ga, ("GaAs.win", "GaAs.eig"), ("GaAs.chk.fmt", "GaAs.mmn", "GaAs.spn"))
+        emax = maximum(read_eig(joinpath(tmp, "GaAs.eig"))) + 0.6667
+        sm = ShcModel(joinpath(tmp, "GaAs"); scissors_shift = 1.117, num_valence_bands = 8)
+        shc = shc_freqscan(sm; freqs = [0.0, 8.0], fermi_energy = 7.9366, kmesh = (10, 10, 10),
+                           adaptive = false, smr_width = 0.05, eigval_max = emax)
+        @test real(shc[1]) ≈ -428.20457 rtol = 1e-5        # oracle freqscan rows 1, 801
+        @test real(shc[2]) ≈ 404.66629 rtol = 1e-4
+    else
+        @test_skip false
+    end
+
+    # morb with transl_inv_full: Fe (oracle wpout: M_z = 0.0415 vs 0.0431 plain)
+    mt = joinpath(REFROOT, "testpostw90_fe_morb_transl_inv")
+    if isfile(joinpath(mt, "Fe.uHu.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = stage(mt, ("Fe.win", "Fe.eig"), ("Fe.chk.fmt", "Fe.mmn", "Fe.uHu"))
+        mm = MorbModel(joinpath(tmp, "Fe"); transl_inv_full = true)
+        M = orbital_magnetisation(mm; fermi_energy = 12.6279, kmesh = (10, 10, 10))
+        @test M[3] ≈ 0.0415 atol = 1e-3
+        @test abs(M[1]) < 1e-3
     else
         @test_skip false
     end

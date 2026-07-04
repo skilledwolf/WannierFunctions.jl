@@ -63,7 +63,8 @@ geometry (from the `.mmn` connectivity, so slot order matches `chk.m_matrix`).
 - Both transformed with `O(R) = (1/N_q) Σ_q e^{−i2πq·R} O(q)` on the Wigner–Seitz R-set.
 """
 function BerryModel(chk::Checkpoint, eig::Matrix{Float64}, bv::Union{Nothing,BVectors},
-                    kgrid::KGrid, lattice::Lattice; use_ws_distance::Bool=false)
+                    kgrid::KGrid, lattice::Lattice; use_ws_distance::Bool=false,
+                    transl_inv_full::Bool=false)
     nw = num_wann(chk)
     nk = nkpt(kgrid)
     nb = num_bands(chk)
@@ -82,34 +83,86 @@ function BerryModel(chk::Checkpoint, eig::Matrix{Float64}, bv::Union{Nothing,BVe
         end
     end
 
-    # A(q): linear finite difference on the final-gauge overlaps, then Hermitise.
-    Aq = zeros(ComplexF64, nw, nw, nk, bv === nothing ? 0 : 3)
-    bv !== nothing && for q in 1:nk, b in 1:bv.nntot
-        w = bv.wb[b, q]
-        bb = SVector{3,Float64}(bv.bvec[1, b, q], bv.bvec[2, b, q], bv.bvec[3, b, q])
-        @views for c in 1:3
-            Aq[:, :, q, c] .+= (im * w * bb[c]) .* chk.m_matrix[:, :, b, q]
-        end
-    end
-    for q in 1:nk, c in 1:size(Aq, 4)
-        @views Aq[:, :, q, c] .= (Aq[:, :, q, c] .+ Aq[:, :, q, c]') ./ 2
-    end
-
     irvec, ndegen = wigner_seitz(lattice, kgrid.mp_grid)
     nr = length(irvec)
+    Rcart = [lattice.A * SVector{3,Float64}(r...) for r in irvec]
+
     Hr = zeros(ComplexF64, nw, nw, nr)
-    Ar = zeros(ComplexF64, nw, nw, nr, size(Aq, 4))
     Threads.@threads for ir in 1:nr
         R = SVector{3,Float64}(irvec[ir]...)
         for q in 1:nk
             fac = cis(-TWOPI * dot(kgrid.frac[q], R)) / nk
             @views Hr[:, :, ir] .+= fac .* Hq[:, :, q]
-            @views for c in 1:size(Aq, 4)
-                Ar[:, :, ir, c] .+= fac .* Aq[:, :, q, c]
-            end
         end
     end
-    Rcart = [lattice.A * SVector{3,Float64}(r...) for r in irvec]
+
+    Ar = zeros(ComplexF64, nw, nw, nr, bv === nothing ? 0 : 3)
+    if bv !== nothing && !transl_inv_full
+        # A(q): linear finite difference on the final-gauge overlaps, then Hermitise.
+        Aq = zeros(ComplexF64, nw, nw, nk, 3)
+        for q in 1:nk, b in 1:bv.nntot
+            w = bv.wb[b, q]
+            bb = SVector{3,Float64}(bv.bvec[1, b, q], bv.bvec[2, b, q], bv.bvec[3, b, q])
+            @views for c in 1:3
+                Aq[:, :, q, c] .+= (im * w * bb[c]) .* chk.m_matrix[:, :, b, q]
+            end
+        end
+        for q in 1:nk, c in 1:3
+            @views Aq[:, :, q, c] .= (Aq[:, :, q, c] .+ Aq[:, :, q, c]') ./ 2
+        end
+        Threads.@threads for ir in 1:nr
+            R = SVector{3,Float64}(irvec[ir]...)
+            for q in 1:nk
+                fac = cis(-TWOPI * dot(kgrid.frac[q], R)) / nk
+                @views for c in 1:3
+                    Ar[:, :, ir, c] .+= fac .* Aq[:, :, q, c]
+                end
+            end
+        end
+    elseif bv !== nothing
+        # transl_inv_full (one-shell translation-invariant scheme): e^{ib·r₀} phases per
+        # element, canonical b-slots scattered onto the EXPANDED minimal-image R-set and
+        # FT'd separately with e^{−ib·R̃/2}, NO hermitisation, and the R = 0 diagonal
+        # replaced by the Wannier centres. The returned model lives on the expanded set
+        # (ndegen ≡ 1, wsdist = nothing): all downstream interpolation is a plain phase sum.
+        ws0 = use_ws_distance ?
+              ws_translate_dist(irvec, chk.centres, lattice, kgrid.mp_grid) : nothing
+        irvec90, idx90 = _pw90_rset(irvec, ws0)
+        nr90 = length(irvec90)
+        Rcart90 = [lattice.A * SVector{3,Float64}(r...) for r in irvec90]
+        Hr90 = _scatter_ws(Hr, irvec, ndegen, ws0, idx90, nr90)
+
+        r0 = [(chk.centres[c, i] + chk.centres[c, j]) / 2 for i in 1:nw, j in 1:nw, c in 1:3]
+        slot = _bvec_canonical_slots(bv)
+        Aq_b = zeros(ComplexF64, nw, nw, nk, bv.nntot, 3)
+        for q in 1:nk, b in 1:bv.nntot
+            w = bv.wb[b, q]
+            bb = SVector{3,Float64}(bv.bvec[1, b, q], bv.bvec[2, b, q], bv.bvec[3, b, q])
+            b0 = slot[b, q]
+            for j in 1:nw, i in 1:nw
+                core = cis(dot(bb, SVector(r0[i, j, 1], r0[i, j, 2], r0[i, j, 3]))) *
+                       chk.m_matrix[i, j, b, q]
+                for c in 1:3
+                    Aq_b[i, j, q, b0, c] += im * w * bb[c] * core
+                end
+            end
+        end
+        Ar90 = zeros(ComplexF64, nw, nw, nr90, 3)
+        for c in 1:3, b0 in 1:bv.nntot
+            Ab = fourier_q_to_R((@view Aq_b[:, :, :, b0, c]), kgrid, irvec)
+            Ab90 = _scatter_ws(Ab, irvec, ndegen, ws0, idx90, nr90)
+            bk1 = SVector(bv.bvec[1, b0, 1], bv.bvec[2, b0, 1], bv.bvec[3, b0, 1])
+            for ir in 1:nr90
+                ph2 = cis(-dot(bk1, Rcart90[ir]) / 2)
+                @views Ar90[:, :, ir, c] .+= ph2 .* Ab90[:, :, ir]
+            end
+        end
+        ir0 = idx90[(0, 0, 0)]
+        for c in 1:3, i in 1:nw
+            Ar90[i, i, ir0, c] = chk.centres[c, i]
+        end
+        return BerryModel(lattice, irvec90, ones(Int, nr90), Rcart90, Hr90, Ar90, nothing)
+    end
     ws = use_ws_distance ?
          ws_translate_dist(irvec, chk.centres, lattice, kgrid.mp_grid) : nothing
     return BerryModel(lattice, irvec, ndegen, Rcart, Hr, Ar, ws)
@@ -136,6 +189,65 @@ function BerryModel(seedname::AbstractString)
     # H(R)-only model (no .mmn): enough for DOS, geninterp, band velocities, BoltzWann.
     # Berry-connection quantities (AHC, Kubo, morb) will error on the empty A(R).
     return BerryModel(chk, eig, nothing, kgrid, lattice; use_ws_distance=win.use_ws_distance)
+end
+
+"""
+Expanded (pw90) R-set: the union of all per-pair minimal-image vectors R+T from a
+`ws_translate_dist` table (reference `irvec_pw90`). Falls back to the plain WS set when
+`wsdist === nothing`.
+"""
+function _pw90_rset(irvec::Vector{NTuple{3,Int}}, wsdist)
+    wsdist === nothing && return copy(irvec), Dict(r => i for (i, r) in enumerate(irvec))
+    idx = Dict{NTuple{3,Int},Int}()
+    list = NTuple{3,Int}[]
+    for ir in eachindex(irvec), j in axes(wsdist, 2), i in axes(wsdist, 1)
+        for r̃ in wsdist[i, j, ir]
+            get!(idx, r̃) do
+                push!(list, r̃)
+                length(list)
+            end
+        end
+    end
+    return list, idx
+end
+
+"""
+Scatter O(R)/(ndegen·ndeg) onto the expanded R-set (reference `operator_wigner_setup`).
+The result is interpolated with a plain phase sum — no further degeneracy handling.
+"""
+function _scatter_ws(op::AbstractArray{ComplexF64,3}, irvec::Vector{NTuple{3,Int}},
+                     ndegen::Vector{Int}, wsdist, idx::Dict{NTuple{3,Int},Int}, nr90::Int)
+    nw = size(op, 1)
+    out = zeros(ComplexF64, nw, nw, nr90)
+    if wsdist === nothing
+        for ir in eachindex(irvec)
+            @views out[:, :, ir] .= op[:, :, ir] ./ ndegen[ir]
+        end
+        return out
+    end
+    for ir in eachindex(irvec), j in 1:nw, i in 1:nw
+        dl = wsdist[i, j, ir]
+        w = 1.0 / (ndegen[ir] * length(dl))
+        for r̃ in dl
+            out[i, j, idx[r̃]] += w * op[i, j, ir]
+        end
+    end
+    return out
+end
+
+"O(R) = (1/N_q) Σ_q e^{−i2πq·R} O(q) on a given R-set (one nw×nw×nk operator stack)."
+function fourier_q_to_R(Xq::AbstractArray{ComplexF64,3}, kgrid::KGrid,
+                        irvec::Vector{NTuple{3,Int}})
+    nw, nk, nr = size(Xq, 1), size(Xq, 3), length(irvec)
+    Xr = zeros(ComplexF64, nw, nw, nr)
+    Threads.@threads for ir in 1:nr
+        R = SVector{3,Float64}(irvec[ir]...)
+        for q in 1:nk
+            fac = cis(-TWOPI * dot(kgrid.frac[q], R)) / nk
+            @views Xr[:, :, ir] .+= fac .* Xq[:, :, q]
+        end
+    end
+    return Xr
 end
 
 "Interpolated k-space data shared by all Fermi levels at one k: E, U, A, Ω̄, rotated velocity."
@@ -203,16 +315,17 @@ function _berry_kdata(bm::BerryModel, kfrac::AbstractVector)
 end
 
 "Occupied-manifold curvature (J0+J1+J2, Ų) at one Fermi level from shared k-data."
-function _imf_kdata(kd, fermi_energy::Float64)
+_imf_kdata(kd, fermi_energy::Float64) = _imf_occ(kd, Float64.(kd.E .< fermi_energy))
+
+function _imf_occ(kd, occ::Vector{Float64})
     E, U = kd.E, kd.U
     nw = length(E)
-    occ = Float64.(E .< fermi_energy)
     f = U * Diagonal(occ) * U'
     JJp = [zeros(ComplexF64, nw, nw) for _ in 1:3]
     JJm = [zeros(ComplexF64, nw, nw) for _ in 1:3]
     for c in 1:3
         for m in 1:nw, n in 1:nw
-            if E[n] > fermi_energy && E[m] < fermi_energy       # n empty, m occupied
+            if occ[n] < 0.5 && occ[m] > 0.5                     # n empty, m occupied
                 JJp[c][n, m] = im * kd.dHh[c][n, m] / (E[m] - E[n])
                 JJm[c][m, n] = im * kd.dHh[c][m, n] / (E[n] - E[m])
             end

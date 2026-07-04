@@ -7,6 +7,12 @@ using StaticArrays
 
 "Light per-k interpolation: eigenvalues and (optionally) their Cartesian derivatives (eV·Å)."
 function eig_deleig(bm::BerryModel, kfrac::AbstractVector; deriv::Bool=true)
+    E, dE, _ = eig_deleig_vec(bm, kfrac; deriv=deriv)
+    return E, dE
+end
+
+"As `eig_deleig`, additionally returning the eigenvector matrix U (WF row, band column)."
+function eig_deleig_vec(bm::BerryModel, kfrac::AbstractVector; deriv::Bool=true)
     nw = num_wann(bm)
     H = zeros(ComplexF64, nw, nw)
     dH = [zeros(ComplexF64, nw, nw) for _ in 1:3]
@@ -53,7 +59,7 @@ function eig_deleig(bm::BerryModel, kfrac::AbstractVector; deriv::Bool=true)
             end
         end
     end
-    return E, dE
+    return E, dE, U
 end
 
 """

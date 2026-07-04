@@ -313,3 +313,27 @@ function write_chk_fmt(path::AbstractString, c::Checkpoint)
     end
     return path
 end
+
+"""
+    gauge_v_windows(chk, nb) -> (vs, winidx)
+
+Per-q windowed gauge matrices `v(q) = U_opt·U` (ndimwin(q) × nw rows of the window) and the
+window band indices, shared by every postw90-style operator assembly (A/B/C, spin, sHu/sIu).
+For non-disentangled runs `v = U` on all `nb` bands.
+"""
+function gauge_v_windows(chk::Checkpoint, nb::Int)
+    nk = size(chk.kpt_latt, 2)
+    vs = Vector{Matrix{ComplexF64}}(undef, nk)
+    winidx = Vector{Vector{Int}}(undef, nk)
+    for q in 1:nk
+        if chk.have_disentangled
+            nd = chk.ndimwin[q]
+            vs[q] = chk.u_matrix_opt[1:nd, :, q] * chk.u_matrix[:, :, q]
+            winidx[q] = findall(@view chk.lwindow[:, q])
+        else
+            vs[q] = chk.u_matrix[:, :, q]
+            winidx[q] = collect(1:nb)
+        end
+    end
+    return vs, winidx
+end

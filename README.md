@@ -179,8 +179,29 @@ locally built `postw90.x` on the bcc-Fe reference case (spinor, 28 bands disenta
   interpolation (its default), an 11% effect on transport.
 - **Spin Hall** (`shc_fermiscan`, QZYZ/Qiao method): `.spn` reader + the σ/σH/σ(r−R) operator
   set — Pt benchmark, all 201 Fermi levels to 4e-8 relative.
-- **kslice** (`kslice`): 2-D BZ slices of bands and Berry curvature — Fe benchmark at file
-  precision.
+- **ac spin Hall** (`shc_freqscan`): frequency scans for both methods — GaAs (Qiao + scissors
+  shift) and Pt benchmarks to ~1e-8 relative.
+- **Ryoo–Park–Souza SHC** (`ShcRyooModel`): Fortran-unformatted `.sHu`/`.sIu` readers and the
+  RPS19 spin-current matrix; the `transl_inv_full` one-shell translation-invariant scheme
+  (expanded minimal-image R-set, e^{ib·r₀}/e^{−ib·R/2} phases, diagonal corrections) is
+  supported for A(R), B(R), C(R), SAA(R), SBB(R) — Pt benchmarks (plain and transl_inv_full)
+  to 2e-8 relative, Fe orbital magnetisation with `transl_inv_full` reproduces the oracle's
+  0.0415 μ_B.
+- **Spin** (`SpinModel`, `spin_moment`, `spin_expectation`): total spin moment (Fe matches the
+  oracle on every printed digit, angles included) and the spin-decomposed DOS (`spin_decomp`,
+  weights (1±⟨σ·n̂⟩)/2) — Fe benchmark at file precision.
+- **Projected DOS** (`density_of_states(...; project)`): WF-resolved |U|² weights — copper
+  d-band benchmark to 4e-8.
+- **kpath** (`kpath`): bands / Berry curvature / orbital-magnetisation integrand / spin Hall
+  along `kpoint_path` segments, with spin or SHC band colouring — Fe `-path.kpt` and
+  `-bands.dat` **byte-identical** with the oracle (including the reference's segment-crossing
+  xval quirk and its fma-contracted point placement), curv/morb at 1e-12.
+- **kslice** (`kslice`): 2-D BZ slices of bands, Berry curvature, orbital-magnetisation
+  integrand, and spin Hall — Fe/Pt benchmarks at file precision.
+- **Gyrotropic responses** (`gyrotropic`, TAS17): Berry-curvature dipole D and tildeD(ω), the
+  C tensor, the kinetic magnetoelectric K tensor (orbital + spin), natural optical activity
+  γ_abc (orbital + spin), and the Fermi-level DOS, over an arbitrary fractional k-box —
+  **five of the six tellurium oracle files are byte-identical**, the sixth matches to 8e-17.
 
 The CLI honours `berry = true` / `berry_task = ahc` / `berry_kmesh` / `fermi_energy` from the
 `.win`.
@@ -195,10 +216,15 @@ against `w90chk2chk.x` conversions.
 
 ## Roadmap
 
-- `guiding_centres` branch selection; Γ-only real-orthogonal parity mode; `.cube` plot output.
-- Berry-phase observables on top of `TBOperator` (the position operator is already in place).
-- Projectability-based (`dis_froz_proj`) and symmetry-adapted (SAWF) variants; `postw90.x`
-  post-processing (BoltzWann, AHC, …) is out of scope for the core.
+- Shift current (`berry_task = sc`) and k·p expansion (`kdotp`) — the two remaining postw90
+  response tasks; tetrahedron smearing for SHC.
+- Output-parity sweep for `wannier90.x` extras: `.cube` plots, `_r.dat`, `.bxsf` Fermi
+  surfaces, `write_hr_diag`, guiding centres, `dis_spheres`; Γ-only real-orthogonal parity
+  mode; SLWF+C selective localisation; symmetry-adapted WFs.
+- Ecosystem: TB-model constructors from `hr.dat`/`tb.dat`, a DFTK.jl in-memory bridge,
+  irreducible-BZ sampling with tensor symmetrisation (WannierBerri-style).
+  See [`docs/reference-notes/parity-audit-2026.md`](docs/reference-notes/parity-audit-2026.md)
+  for the full triage.
 
 ## Documentation
 

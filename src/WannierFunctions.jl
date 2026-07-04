@@ -32,12 +32,15 @@ include("plot.jl")
 include("scdm.jl")
 include("berry.jl")
 include("kubo.jl")
+include("spin.jl")
 include("dos.jl")
 include("boltzwann.jl")
 include("shc.jl")
-include("kslice.jl")
 include("morb.jl")
+include("gyrotropic.jl")
+include("kslice.jl")
 include("geninterp.jl")
+include("kpath.jl")
 include("wout.jl")
 include("cli.jl")
 include("show.jl")
@@ -60,8 +63,11 @@ export BerryModel, berry_curvature_k, anomalous_hall, ahc_fermiscan
 export geninterp, eig_deleig, read_geninterp_kpt
 export optical_conductivity, KuboResult, kubo_S, kubo_A
 export density_of_states, write_dos
+export SpinModel, spin_moment, spin_expectation
+export kpath, kpath_points, kpath_segments, write_kpath
+export gyrotropic, write_gyrotropic
 export boltzwann, BoltzWannResult
-export ShcModel, shc_fermiscan, read_spn
+export ShcModel, ShcRyooModel, shc_fermiscan, shc_freqscan, read_spn, read_shu, write_shc
 export kslice, write_kslice
 export MorbModel, orbital_magnetisation, read_uhu
 export TBOperator, hamiltonian_operator, position_operator, bands, fourier_to_R
