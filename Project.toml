@@ -1,0 +1,19 @@
+name = "Wannier90"
+uuid = "9a7e0b21-4c3d-4f8e-b6a1-2f7c5d0e1a44"
+authors = ["Tobias Wolf <tobias.mr.wolf@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[compat]
+StaticArrays = "1"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

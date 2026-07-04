@@ -1,0 +1,8 @@
+reference/
+*.jl.cov
+*.jl.mem
+/Manifest.toml
+.DS_Store
+scratch/
+*.o
+*.mod
