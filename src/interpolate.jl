@@ -63,12 +63,12 @@ function build_hr(U::Array{ComplexF64,3}, eig::Matrix{Float64}, kgrid::KGrid,
                  irvec::Vector{NTuple{3,Int}})
     nw = size(U, 1); nk = size(U, 3); nr = length(irvec)
     Hk = Array{ComplexF64,3}(undef, nw, nw, nk)
-    for k in 1:nk
+    @maybe_threads (nk >= THREAD_MIN) for k in 1:nk
         Uk = @view U[:, :, k]
         Hk[:, :, k] = Uk' * Diagonal(@view eig[:, k]) * Uk
     end
     Hr = zeros(ComplexF64, nw, nw, nr)
-    for ir in 1:nr
+    @maybe_threads (nr >= THREAD_MIN) for ir in 1:nr
         R = SVector{3,Float64}(irvec[ir]...)
         for k in 1:nk
             fac = cis(-TWOPI * dot(kgrid.frac[k], R)) / nk
@@ -151,8 +151,8 @@ function interpolate_bands(Hr::Array{ComplexF64,3}, irvec::Vector{NTuple{3,Int}}
                           ndegen::Vector{Int}, kpts::Vector{SVector{3,Float64}})
     nw = size(Hr, 1)
     eigs = Matrix{Float64}(undef, nw, length(kpts))
-    for (ik, kf) in enumerate(kpts)
-        H = interpolate_hk(Hr, irvec, ndegen, kf)
+    @maybe_threads (length(kpts) >= 32) for ik in 1:length(kpts)
+        H = interpolate_hk(Hr, irvec, ndegen, kpts[ik])
         eigs[:, ik] = eigvals(Hermitian((H + H') / 2))
     end
     return eigs
@@ -250,8 +250,8 @@ function interpolate_bands_ws(Hr::Array{ComplexF64,3}, irvec::Vector{NTuple{3,In
     irdist = ws_translate_dist(irvec, centres, lattice, mp_grid)
     nw = size(Hr, 1)
     eigs = Matrix{Float64}(undef, nw, length(kpts))
-    for (ik, kf) in enumerate(kpts)
-        H = interpolate_hk_ws(Hr, ndegen, irdist, kf)
+    @maybe_threads (length(kpts) >= 32) for ik in 1:length(kpts)
+        H = interpolate_hk_ws(Hr, ndegen, irdist, kpts[ik])
         eigs[:, ik] = eigvals(Hermitian((H + H') / 2))
     end
     return eigs

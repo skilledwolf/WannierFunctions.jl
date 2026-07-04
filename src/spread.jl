@@ -10,6 +10,8 @@
 #   Ω_OD           = (1/N_k) Σ_{k,b} w_b Σ_{m≠n} |M̃_{mn}|²
 #   Ω_D            = (1/N_k) Σ_{k,b} w_b Σ_n ( −Im ln M̃_{nn} − b·r̄_n )²
 # with Ω = Ω_I + Ω_OD + Ω_D.
+#
+# The k-sums are threaded (per-k partials, reduced after the loop).
 
 using LinearAlgebra
 using StaticArrays
@@ -36,42 +38,50 @@ function compute_spread(Mrot::Array{ComplexF64,4}, bv::BVectors)
     nk = size(Mrot, 4)
     invNk = 1.0 / nk
 
-    r = zeros(3, nw)              # centres
-    # centres first (needed by Ω_D)
-    for k in 1:nk, b in 1:nntot
-        w = bv.wb[b, k]
-        bb = SVector{3,Float64}(bv.bvec[1, b, k], bv.bvec[2, b, k], bv.bvec[3, b, k])
-        for n in 1:nw
-            imln = imag(log(Mrot[n, n, b, k]))
-            @inbounds for a in 1:3
-                r[a, n] -= invNk * w * imln * bb[a]
+    # Pass 1 — centres (needed by Ω_D): per-k partials, then reduce.
+    rk = zeros(3, nw, nk)
+    @maybe_threads (nk >= THREAD_MIN) for k in 1:nk
+        @inbounds for b in 1:nntot
+            w = bv.wb[b, k]
+            bx, by, bz = bv.bvec[1, b, k], bv.bvec[2, b, k], bv.bvec[3, b, k]
+            for n in 1:nw
+                imln = imag(log(Mrot[n, n, b, k]))
+                f = invNk * w * imln
+                rk[1, n, k] -= f * bx
+                rk[2, n, k] -= f * by
+                rk[3, n, k] -= f * bz
             end
         end
     end
+    r = dropdims(sum(rk; dims=3); dims=3)
 
-    r2 = zeros(nw)
-    ΩI = 0.0; ΩOD = 0.0; ΩD = 0.0
-    for k in 1:nk, b in 1:nntot
-        w = bv.wb[b, k]
-        bb = SVector{3,Float64}(bv.bvec[1, b, k], bv.bvec[2, b, k], bv.bvec[3, b, k])
-        sall = 0.0
-        @inbounds for n in 1:nw, m in 1:nw
-            sall += abs2(Mrot[m, n, b, k])
+    # Pass 2 — spreads and the decomposition: per-k partials, then reduce.
+    r2k = zeros(nw, nk)
+    ΩIk = zeros(nk); ΩODk = zeros(nk); ΩDk = zeros(nk)
+    @maybe_threads (nk >= THREAD_MIN) for k in 1:nk
+        @inbounds for b in 1:nntot
+            w = bv.wb[b, k]
+            bx, by, bz = bv.bvec[1, b, k], bv.bvec[2, b, k], bv.bvec[3, b, k]
+            sall = 0.0
+            for n in 1:nw, m in 1:nw
+                sall += abs2(Mrot[m, n, b, k])
+            end
+            sdiag = 0.0
+            for n in 1:nw
+                mnn = Mrot[n, n, b, k]
+                a2 = abs2(mnn)
+                sdiag += a2
+                imln = imag(log(mnn))
+                r2k[n, k] += invNk * w * ((1.0 - a2) + imln^2)
+                q = -imln - (bx * r[1, n] + by * r[2, n] + bz * r[3, n])
+                ΩDk[k] += invNk * w * q^2
+            end
+            ΩIk[k] += invNk * w * (nw - sall)
+            ΩODk[k] += invNk * w * (sall - sdiag)
         end
-        sdiag = 0.0
-        @inbounds for n in 1:nw
-            mnn = Mrot[n, n, b, k]
-            a2 = abs2(mnn)
-            sdiag += a2
-            imln = imag(log(mnn))
-            r2[n] += invNk * w * ((1.0 - a2) + imln^2)
-            rn = SVector{3,Float64}(r[1, n], r[2, n], r[3, n])
-            q = -imln - dot(bb, rn)
-            ΩD += invNk * w * q^2
-        end
-        ΩI += invNk * w * (nw - sall)
-        ΩOD += invNk * w * (sall - sdiag)
     end
+    r2 = dropdims(sum(r2k; dims=2); dims=2)
+    ΩI, ΩOD, ΩD = sum(ΩIk), sum(ΩODk), sum(ΩDk)
 
     spreads = [r2[n] - (r[1, n]^2 + r[2, n]^2 + r[3, n]^2) for n in 1:nw]
     Ω = sum(spreads)

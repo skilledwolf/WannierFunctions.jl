@@ -16,7 +16,7 @@ end
 function expm_all(gen::Array{ComplexF64,3})
     nw, _, nk = size(gen)
     R = Array{ComplexF64,3}(undef, nw, nw, nk)
-    for k in 1:nk
+    @maybe_threads (nk >= THREAD_MIN) for k in 1:nk
         R[:, :, k] = expm_antiherm(@view gen[:, :, k])
     end
     return R
@@ -27,12 +27,16 @@ function apply_rotation!(U::Array{ComplexF64,3}, Mrot::Array{ComplexF64,4},
                         kpb::Matrix{Int}, R::Array{ComplexF64,3})
     nw, _, nk = size(U)
     nntot = size(Mrot, 3)
-    for k in 1:nk
+    @maybe_threads (nk >= THREAD_MIN) for k in 1:nk
         U[:, :, k] = (@view U[:, :, k]) * (@view R[:, :, k])
     end
-    for k in 1:nk, b in 1:nntot
-        kb = kpb[b, k]
-        Mrot[:, :, b, k] = (@view R[:, :, k])' * (@view Mrot[:, :, b, k]) * (@view R[:, :, kb])
+    # NB: Mrot[:, :, b, k] reads R at both k and its neighbour, but writes only slice (b, k),
+    # and R is not mutated here — safe to thread over k.
+    @maybe_threads (nk >= THREAD_MIN) for k in 1:nk
+        for b in 1:nntot
+            kb = kpb[b, k]
+            Mrot[:, :, b, k] = (@view R[:, :, k])' * (@view Mrot[:, :, b, k]) * (@view R[:, :, kb])
+        end
     end
     return nothing
 end
@@ -47,10 +51,12 @@ Analytic gradient dΩ/dW as the anti-Hermitian matrix `G[:,:,k]`, following `wan
 function omega_gradient(Mrot::Array{ComplexF64,4}, bv::BVectors, centres::Matrix{Float64})
     nw = size(Mrot, 1); nntot = size(Mrot, 3); nk = size(Mrot, 4)
     G = zeros(ComplexF64, nw, nw, nk)
-    lnt = Vector{Float64}(undef, nw)      # w_b · Im ln M_nn
-    rnkb = Vector{Float64}(undef, nw)     # b · r_n
-    mnn = Vector{ComplexF64}(undef, nw)
-    for k in 1:nk, b in 1:nntot
+    @maybe_threads (nk >= THREAD_MIN) for k in 1:nk
+      # thread-local scratch
+      lnt = Vector{Float64}(undef, nw)      # w_b · Im ln M_nn
+      rnkb = Vector{Float64}(undef, nw)     # b · r_n
+      mnn = Vector{ComplexF64}(undef, nw)
+      for b in 1:nntot
         w = bv.wb[b, k]
         bx, by, bz = bv.bvec[1, b, k], bv.bvec[2, b, k], bv.bvec[3, b, k]
         @inbounds for n in 1:nw
@@ -71,6 +77,7 @@ function omega_gradient(Mrot::Array{ComplexF64,4}, bv::BVectors, centres::Matrix
             G[m, n, k] -= (crt_mn * lnt[n] + conj(crt_nm * lnt[m])) * complex(0.0, -0.5)
             G[m, n, k] -= w * (crt_mn * rnkb[n] + conj(crt_nm * rnkb[m])) * complex(0.0, -0.5)
         end
+      end
     end
     G .*= (4.0 / nk)
     return G

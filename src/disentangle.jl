@@ -257,9 +257,12 @@ function disentangle(model::Model;
         niter = iter
         # Build/mix the Z matrices (only for k with non-frozen states).
         Zout = Vector{Matrix{ComplexF64}}(undef, nk)
-        for k in 1:nk
-            wd.ndimfroz[k] == nw && (Zout[k] = zeros(ComplexF64, 0, 0); continue)
-            Zout[k] = Matrix(zmatrix(Mwin[k], Uopt, kpb, wd, bv, k, nw))
+        @maybe_threads (nk >= THREAD_MIN) for k in 1:nk
+            if wd.ndimfroz[k] == nw
+                Zout[k] = zeros(ComplexF64, 0, 0)
+            else
+                Zout[k] = Matrix(zmatrix(Mwin[k], Uopt, kpb, wd, bv, k, nw))
+            end
         end
         if iter == 1
             Zin = Zout

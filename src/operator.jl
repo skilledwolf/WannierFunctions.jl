@@ -47,7 +47,7 @@ Generic k→R transform of a matrix-valued operator: `OR[:,:,ir,c] = (1/N_k) Σ_
 function fourier_to_R(Ok::Array{ComplexF64,4}, kgrid::KGrid, irvec::Vector{NTuple{3,Int}})
     nw, _, nk, nc = size(Ok)
     OR = zeros(ComplexF64, nw, nw, length(irvec), nc)
-    for ir in 1:length(irvec)
+    @maybe_threads (length(irvec) >= THREAD_MIN) for ir in 1:length(irvec)
         R = SVector{3,Float64}(irvec[ir]...)
         for k in 1:nk
             fac = cis(-TWOPI * dot(kgrid.frac[k], R)) / nk
@@ -135,8 +135,8 @@ function bands(H::TBOperator, kpts::AbstractVector)
     ncomponents(H) == 1 || error("bands: need a scalar (1-component) operator, got $(H.name)")
     nw = num_wann(H)
     E = Matrix{Float64}(undef, nw, length(kpts))
-    for (ik, kf) in enumerate(kpts)
-        Hk = H(kf)
+    @maybe_threads (length(kpts) >= 32) for ik in 1:length(kpts)
+        Hk = H(kpts[ik])
         E[:, ik] = eigvals(Hermitian((Hk + Hk') / 2))
     end
     return E

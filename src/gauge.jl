@@ -27,7 +27,7 @@ Per-k Löwdin gauge for the whole model. `A` is (num_bands × num_wann × num_kp
 function initial_gauge(A::Array{ComplexF64,3})
     nb, nw, nk = size(A)
     U = Array{ComplexF64,3}(undef, nb, nw, nk)
-    for k in 1:nk
+    @maybe_threads (nk >= THREAD_MIN) for k in 1:nk
         U[:, :, k] = lowdin(@view A[:, :, k])
     end
     return U
@@ -43,9 +43,11 @@ function rotate_overlaps(M::Array{ComplexF64,4}, U::Array{ComplexF64,3}, kpb::Ma
     nb, nw, nk = size(U)
     nntot = size(M, 3)
     Mrot = Array{ComplexF64,4}(undef, nw, nw, nntot, nk)
-    for k in 1:nk, b in 1:nntot
-        kb = kpb[b, k]
-        Mrot[:, :, b, k] = (@view U[:, :, k])' * (@view M[:, :, b, k]) * (@view U[:, :, kb])
+    @maybe_threads (nk >= THREAD_MIN) for k in 1:nk
+        for b in 1:nntot
+            kb = kpb[b, k]
+            Mrot[:, :, b, k] = (@view U[:, :, k])' * (@view M[:, :, b, k]) * (@view U[:, :, kb])
+        end
     end
     return Mrot
 end
