@@ -19,10 +19,12 @@ include("io.jl")
 include("kmesh.jl")
 include("gauge.jl")
 include("spread.jl")
+include("wannierise.jl")
 
 export Lattice, KGrid, BVectors, Model
 export read_win, read_amn, read_mmn, read_eig
 export read_model, initial_gauge, rotate_overlaps, compute_spread, SpreadResult
+export wannierise, WannieriseResult
 
 """
     read_model(seedname) -> Model
