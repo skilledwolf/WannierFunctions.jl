@@ -32,6 +32,7 @@ include("plot.jl")
 include("scdm.jl")
 include("berry.jl")
 include("kubo.jl")
+include("dos.jl")
 include("morb.jl")
 include("geninterp.jl")
 include("wout.jl")
@@ -55,6 +56,7 @@ export scdm_projections, write_amn
 export BerryModel, berry_curvature_k, anomalous_hall, ahc_fermiscan
 export geninterp, eig_deleig, read_geninterp_kpt
 export optical_conductivity, KuboResult, kubo_S, kubo_A
+export density_of_states, write_dos
 export MorbModel, orbital_magnetisation, read_uhu
 export TBOperator, hamiltonian_operator, position_operator, bands, fourier_to_R
 

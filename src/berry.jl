@@ -59,8 +59,8 @@ geometry (from the `.mmn` connectivity, so slot order matches `chk.m_matrix`).
   then Hermitised: A ← (A + A†)/2.
 - Both transformed with `O(R) = (1/N_q) Σ_q e^{−i2πq·R} O(q)` on the Wigner–Seitz R-set.
 """
-function BerryModel(chk::Checkpoint, eig::Matrix{Float64}, bv::BVectors, kgrid::KGrid,
-                    lattice::Lattice)
+function BerryModel(chk::Checkpoint, eig::Matrix{Float64}, bv::Union{Nothing,BVectors},
+                    kgrid::KGrid, lattice::Lattice)
     nw = num_wann(chk)
     nk = nkpt(kgrid)
     nb = num_bands(chk)
@@ -80,28 +80,28 @@ function BerryModel(chk::Checkpoint, eig::Matrix{Float64}, bv::BVectors, kgrid::
     end
 
     # A(q): linear finite difference on the final-gauge overlaps, then Hermitise.
-    Aq = zeros(ComplexF64, nw, nw, nk, 3)
-    for q in 1:nk, b in 1:bv.nntot
+    Aq = zeros(ComplexF64, nw, nw, nk, bv === nothing ? 0 : 3)
+    bv !== nothing && for q in 1:nk, b in 1:bv.nntot
         w = bv.wb[b, q]
         bb = SVector{3,Float64}(bv.bvec[1, b, q], bv.bvec[2, b, q], bv.bvec[3, b, q])
         @views for c in 1:3
             Aq[:, :, q, c] .+= (im * w * bb[c]) .* chk.m_matrix[:, :, b, q]
         end
     end
-    for q in 1:nk, c in 1:3
+    for q in 1:nk, c in 1:size(Aq, 4)
         @views Aq[:, :, q, c] .= (Aq[:, :, q, c] .+ Aq[:, :, q, c]') ./ 2
     end
 
     irvec, ndegen = wigner_seitz(lattice, kgrid.mp_grid)
     nr = length(irvec)
     Hr = zeros(ComplexF64, nw, nw, nr)
-    Ar = zeros(ComplexF64, nw, nw, nr, 3)
+    Ar = zeros(ComplexF64, nw, nw, nr, size(Aq, 4))
     Threads.@threads for ir in 1:nr
         R = SVector{3,Float64}(irvec[ir]...)
         for q in 1:nk
             fac = cis(-TWOPI * dot(kgrid.frac[q], R)) / nk
             @views Hr[:, :, ir] .+= fac .* Hq[:, :, q]
-            @views for c in 1:3
+            @views for c in 1:size(Aq, 4)
                 Ar[:, :, ir, c] .+= fac .* Aq[:, :, q, c]
             end
         end
@@ -121,11 +121,16 @@ function BerryModel(seedname::AbstractString)
     chk = isfile(seedname * ".chk") ? read_chk(seedname * ".chk") :
           read_chk_fmt(seedname * ".chk.fmt")
     eig = read_eig(seedname * ".eig")
-    _, kpb, gpb, _, nk, _ = read_mmn(seedname * ".mmn")
     lattice = Lattice(win.unit_cell)
     kgrid = KGrid(win.kpoints, win.mp_grid)
-    bv = build_bvectors(kgrid, lattice, kpb, gpb; kmesh_tol=win.kmesh_tol)
-    return BerryModel(chk, eig, bv, kgrid, lattice)
+    if isfile(seedname * ".mmn")
+        _, kpb, gpb, _, nk, _ = read_mmn(seedname * ".mmn")
+        bv = build_bvectors(kgrid, lattice, kpb, gpb; kmesh_tol=win.kmesh_tol)
+        return BerryModel(chk, eig, bv, kgrid, lattice)
+    end
+    # H(R)-only model (no .mmn): enough for DOS, geninterp, band velocities, BoltzWann.
+    # Berry-connection quantities (AHC, Kubo, morb) will error on the empty A(R).
+    return BerryModel(chk, eig, nothing, kgrid, lattice)
 end
 
 "Interpolated k-space data shared by all Fermi levels at one k: E, U, A, Ω̄, rotated velocity."
@@ -142,12 +147,16 @@ function _berry_kdata(bm::BerryModel, kfrac::AbstractVector)
         @views H .+= fac .* bm.Hr[:, :, ir]
         @views for c in 1:3
             dH[c] .+= (fac * im * R[c]) .* bm.Hr[:, :, ir]
-            A[c] .+= fac .* bm.Ar[:, :, ir, c]
         end
-        # Ω̄_i = Σ_R e^{ikR} i (R_α A_β − R_β A_α)
-        @views for i in 1:3
-            α, β = ALPHA_A[i], BETA_A[i]
-            Ω̄[i] .+= (fac * im) .* (R[α] .* bm.Ar[:, :, ir, β] .- R[β] .* bm.Ar[:, :, ir, α])
+        if size(bm.Ar, 4) == 3
+            @views for c in 1:3
+                A[c] .+= fac .* bm.Ar[:, :, ir, c]
+            end
+            # Ω̄_i = Σ_R e^{ikR} i (R_α A_β − R_β A_α)
+            @views for i in 1:3
+                α, β = ALPHA_A[i], BETA_A[i]
+                Ω̄[i] .+= (fac * im) .* (R[α] .* bm.Ar[:, :, ir, β] .- R[β] .* bm.Ar[:, :, ir, α])
+            end
         end
     end
     F = eigen(Hermitian((H + H') / 2))
