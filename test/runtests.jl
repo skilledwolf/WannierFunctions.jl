@@ -652,3 +652,44 @@ end
         @test_skip false
     end
 end
+
+# =========================================================================
+# (12) SCDM PROJECTIONS + FORMATTED CHECKPOINT
+# =========================================================================
+@testset "SCDM projections (GaAs)" begin
+    gd = joinpath(REFROOT, "testw90_example01")
+    if isfile(joinpath(gd, "UNK00001.1")) && GAAS_MODEL !== nothing
+        model = read_model(joinpath(gd, "gaas"))
+        A = scdm_projections(model; dir = gd)
+        @test size(A) == (4, 4, 8)
+        model.A = A
+        res = run_wannier(model)
+        @test res.converged
+        # SCDM start must reach the same gauge-invariant minimum as the shipped projections
+        @test res.spread.Ω ≈ 4.466880976 atol = 2e-6
+        # .amn writer round-trip
+        p = joinpath(mktempdir(), "scdm.amn")
+        write_amn(p, A)
+        A2, nb, nk, nw = read_amn(p)
+        @test A2 ≈ A atol = 1e-11
+    else
+        @test_skip false
+    end
+end
+
+@testset "Formatted checkpoint (.chk.fmt)" begin
+    if DIAMOND_MODEL !== nothing
+        win = read_win(DIAMOND_SEED * ".win")
+        res = run_wannier(DIAMOND_MODEL, win)
+        c = Checkpoint(DIAMOND_MODEL, win, res)
+        p = joinpath(mktempdir(), "d.chk.fmt")
+        write_chk_fmt(p, c)
+        c2 = read_chk_fmt(p)
+        @test c2.u_matrix ≈ c.u_matrix
+        @test c2.m_matrix ≈ c.m_matrix
+        @test c2.centres ≈ c.centres
+        @test c2.mp_grid == c.mp_grid
+    else
+        @test_skip false
+    end
+end

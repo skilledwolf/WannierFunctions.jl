@@ -192,3 +192,124 @@ function Checkpoint(model::Model, win::WinInput, result::WannierResult)
                       result.disentangled, ωI, lwindow, ndimwin, uopt,
                       result.U, Mout, result.spread.centres, result.spread.spreads)
 end
+
+# --- formatted variant (.chk.fmt) — the cross-platform transport format of w90chk2chk.x -------
+# Line-oriented, list-directed: same record sequence as the binary, floats as "re im" pairs,
+# logicals as 0/1 integers (conv_read_chkpt_fmt / conv_write_chkpt_fmt in w90chk2chk.F90).
+
+"""
+    read_chk_fmt(path) -> Checkpoint
+
+Read a formatted checkpoint (`seedname.chk.fmt`, as produced by `w90chk2chk.x -u2f`).
+"""
+function read_chk_fmt(path::AbstractString)
+    it = eachline(path)
+    st = iterate(it)
+    nextline() = (l = st[1]; st = iterate(it, st[2]); l)
+    ints(l) = parse.(Int, split(l))
+    flts(l) = parse.(Float64, replace.(split(l), r"[dD]" => "e"))
+
+    header = nextline()
+    nb = ints(nextline())[1]
+    nexcl = ints(nextline())[1]
+    excl = [ints(nextline())[1] for _ in 1:nexcl]
+    A = reshape(flts(nextline()), 3, 3)
+    B = reshape(flts(nextline()), 3, 3)
+    nk = ints(nextline())[1]
+    mp = ints(nextline())
+    kl = Matrix{Float64}(undef, 3, nk)
+    for k in 1:nk
+        kl[:, k] = flts(nextline())
+    end
+    nntot = ints(nextline())[1]
+    nw = ints(nextline())[1]
+    tag = strip(nextline())
+    havedis = ints(nextline())[1] != 0
+    ωI = NaN
+    lwindow = nothing; ndimwin = nothing; uopt = nothing
+    cplx() = (v = flts(nextline()); complex(v[1], v[2]))
+    if havedis
+        ωI = flts(nextline())[1]
+        lwindow = Matrix{Bool}(undef, nb, nk)
+        for k in 1:nk, i in 1:nb
+            lwindow[i, k] = ints(nextline())[1] != 0
+        end
+        ndimwin = [ints(nextline())[1] for _ in 1:nk]
+        uopt = Array{ComplexF64,3}(undef, nb, nw, nk)
+        for k in 1:nk, j in 1:nw, i in 1:nb
+            uopt[i, j, k] = cplx()
+        end
+    end
+    u = Array{ComplexF64,3}(undef, nw, nw, nk)
+    for k in 1:nk, j in 1:nw, i in 1:nw
+        u[i, j, k] = cplx()
+    end
+    m = Array{ComplexF64,4}(undef, nw, nw, nntot, nk)
+    for k in 1:nk, n in 1:nntot, j in 1:nw, i in 1:nw
+        m[i, j, n, k] = cplx()
+    end
+    centres = Matrix{Float64}(undef, 3, nw)
+    for j in 1:nw
+        centres[:, j] = flts(nextline())
+    end
+    spreads = [flts(nextline())[1] for _ in 1:nw]
+    return Checkpoint(String(strip(header)), excl, Matrix(transpose(A)), Matrix(transpose(B)),
+                      kl, (mp[1], mp[2], mp[3]), nntot, String(tag), havedis, ωI,
+                      lwindow, ndimwin, uopt, u, m, centres, spreads)
+end
+
+"""
+    write_chk_fmt(path, chk::Checkpoint)
+
+Write a formatted checkpoint readable by `w90chk2chk.x -f2u` (and any Wannier90 build).
+"""
+function write_chk_fmt(path::AbstractString, c::Checkpoint)
+    g(x) = @sprintf("%25.17E", x)
+    open(path, "w") do io
+        println(io, rpad(c.header, 33)[1:33])
+        println(io, num_bands(c))
+        println(io, length(c.exclude_bands))
+        for b in c.exclude_bands
+            println(io, b)
+        end
+        At = transpose(c.real_lattice)                 # rows = a_i on disk
+        println(io, join((g(At[i, j]) for j in 1:3 for i in 1:3), ""))
+        Bt = transpose(c.recip_lattice)
+        println(io, join((g(Bt[i, j]) for j in 1:3 for i in 1:3), ""))
+        println(io, size(c.kpt_latt, 2))
+        println(io, join(c.mp_grid, " "))
+        for k in 1:size(c.kpt_latt, 2)
+            println(io, g(c.kpt_latt[1, k]), g(c.kpt_latt[2, k]), g(c.kpt_latt[3, k]))
+        end
+        println(io, c.nntot)
+        println(io, num_wann(c))
+        println(io, c.checkpoint)
+        println(io, c.have_disentangled ? 1 : 0)
+        if c.have_disentangled
+            println(io, g(c.omega_invariant))
+            for k in 1:size(c.kpt_latt, 2), i in 1:num_bands(c)
+                println(io, c.lwindow[i, k] ? 1 : 0)
+            end
+            for k in 1:size(c.kpt_latt, 2)
+                println(io, c.ndimwin[k])
+            end
+            for k in 1:size(c.kpt_latt, 2), j in 1:num_wann(c), i in 1:num_bands(c)
+                println(io, g(real(c.u_matrix_opt[i, j, k])), g(imag(c.u_matrix_opt[i, j, k])))
+            end
+        end
+        nw = num_wann(c)
+        for k in 1:size(c.kpt_latt, 2), j in 1:nw, i in 1:nw
+            println(io, g(real(c.u_matrix[i, j, k])), g(imag(c.u_matrix[i, j, k])))
+        end
+        for k in 1:size(c.kpt_latt, 2), n in 1:c.nntot, j in 1:nw, i in 1:nw
+            println(io, g(real(c.m_matrix[i, j, n, k])), g(imag(c.m_matrix[i, j, n, k])))
+        end
+        for j in 1:nw
+            println(io, g(c.centres[1, j]), g(c.centres[2, j]), g(c.centres[3, j]))
+        end
+        for j in 1:nw
+            println(io, g(c.spreads[j]))
+        end
+    end
+    return path
+end
