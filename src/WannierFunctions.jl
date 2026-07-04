@@ -34,6 +34,7 @@ include("berry.jl")
 include("kubo.jl")
 include("dos.jl")
 include("boltzwann.jl")
+include("shc.jl")
 include("morb.jl")
 include("geninterp.jl")
 include("wout.jl")
@@ -59,6 +60,7 @@ export geninterp, eig_deleig, read_geninterp_kpt
 export optical_conductivity, KuboResult, kubo_S, kubo_A
 export density_of_states, write_dos
 export boltzwann, BoltzWannResult
+export ShcModel, shc_fermiscan, read_spn
 export MorbModel, orbital_magnetisation, read_uhu
 export TBOperator, hamiltonian_operator, position_operator, bands, fourier_to_R
 
