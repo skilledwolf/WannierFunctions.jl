@@ -24,6 +24,7 @@ include("wannierise.jl")
 include("interpolate.jl")
 include("disentangle.jl")
 include("pipeline.jl")
+include("operator.jl")
 include("output.jl")
 include("nnkp.jl")
 include("wout.jl")
@@ -41,6 +42,7 @@ export ws_translate_dist, interpolate_bands_ws
 export write_hr, read_hr, write_tb, write_band_dat, write_band_kpt, write_labelinfo
 export write_wout, generate_kpath, main
 export generate_nnkp, write_nnkp, parse_projections, Projection
+export TBOperator, hamiltonian_operator, position_operator, bands, fourier_to_R
 
 """
     read_model(seedname) -> Model

@@ -454,3 +454,38 @@ end
         @test_skip false
     end
 end
+
+# =========================================================================
+# (8) OPERATOR API — TBOperator invariants
+# =========================================================================
+@testset "TBOperator + position operator" begin
+    if DIAMOND_MODEL !== nothing
+        res = run_wannier(DIAMOND_MODEL)                      # native path, :rcg
+        H = hamiltonian_operator(DIAMOND_MODEL, res)
+        # operator evaluation must agree with the array-based interpolation
+        kf = DIAMOND_MODEL.kgrid.frac
+        E_op = bands(H, kf)
+        irvec, ndegen = wigner_seitz(DIAMOND_MODEL.lattice, DIAMOND_MODEL.kgrid.mp_grid)
+        Hr, _ = build_hr(res.U, res.eig_interp, DIAMOND_MODEL.kgrid, irvec)
+        E_arr = interpolate_bands(Hr, irvec, ndegen, kf)
+        @test maximum(abs.(E_op .- E_arr)) < 1e-12
+
+        # position operator: diag(r(R=0)) must equal the Wannier centres, imag ≈ 0
+        rop = position_operator(DIAMOND_MODEL, res)
+        ir0 = findfirst(==((0, 0, 0)), rop.irvec)
+        @test ir0 !== nothing
+        for n in 1:DIAMOND_MODEL.num_wann, c in 1:3
+            @test real(rop.data[n, n, ir0, c]) ≈ res.spread.centres[c, n] atol = 1e-8
+            @test abs(imag(rop.data[n, n, ir0, c])) < 1e-8
+        end
+        # NB: r(-R) = r(R)† does NOT hold exactly for this operator — the finite-difference
+        # Berry connection i·Σ_b w_b b M is a first-order stencil whose Hermitian defect is a
+        # k-mesh artifact (~0.07 Å on this 4×4×4 mesh). The reference writes the same
+        # non-symmetrised object to _tb.dat (verified: max element diff vs wannier90.x is
+        # 1.3e-8 Å, the E15.8 file precision), so we assert only the guaranteed invariants
+        # above and finiteness here.
+        @test all(isfinite, rop.data)
+    else
+        @test_skip false
+    end
+end

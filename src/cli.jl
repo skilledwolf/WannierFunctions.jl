@@ -52,7 +52,11 @@ function main(seedname::AbstractString; pp::Bool=false, write_files::Bool=true, 
             irvec, ndegen = wigner_seitz(model.lattice, model.kgrid.mp_grid)
             Hr, _ = build_hr(result.U, result.eig_interp, model.kgrid, irvec)
             need_hr && write_hr(seedname * "_hr.dat", model.num_wann, irvec, ndegen, Hr)
-            need_tb && write_tb(seedname * "_tb.dat", model.lattice, model.num_wann, irvec, ndegen, Hr)
+            if need_tb
+                rop = position_operator(model, result)
+                write_tb(seedname * "_tb.dat", model.lattice, model.num_wann, irvec, ndegen, Hr;
+                         pos=rop.data)
+            end
             if need_bands
                 npts = _winint(win, "bands_num_points", 100)
                 kpts, xvals, labels, lidx = generate_kpath(win, model.lattice; bands_num_points=npts)

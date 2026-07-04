@@ -11,6 +11,7 @@ case, or the disentangled subspace eigenvalues), both num_wann × nkpt.
 """
 struct WannierResult
     U::Array{ComplexF64,3}
+    Mrot::Array{ComplexF64,4}      # final-gauge num_wann overlaps (position operator, spreads)
     eig_interp::Union{Nothing,Matrix{Float64}}
     spread::SpreadResult
     disentangled::Bool
@@ -44,10 +45,10 @@ function run_wannier(model::Model;
                           num_iter=dis_num_iter, mix_ratio=dis_mix_ratio, verbose=verbose)
         res = localize(dis.U0, dis.Mrot0, model.bvectors;
                        num_iter=num_iter, algorithm=algorithm, verbose=verbose)
-        return WannierResult(res.U, dis.eigval_opt, res.spread, true, dis.omega_I, res.niter, res.converged, dis)
+        return WannierResult(res.U, res.Mrot, dis.eigval_opt, res.spread, true, dis.omega_I, res.niter, res.converged, dis)
     else
         res = wannierise(model; num_iter=num_iter, algorithm=algorithm, verbose=verbose)
-        return WannierResult(res.U, model.eig, res.spread, false, res.spread.ΩI, res.niter, res.converged, nothing)
+        return WannierResult(res.U, res.Mrot, model.eig, res.spread, false, res.spread.ΩI, res.niter, res.converged, nothing)
     end
 end
 
@@ -84,11 +85,11 @@ function interpolate(model::Model, result::WannierResult, kpts::Vector{SVector{3
                      use_ws_distance::Bool=false)
     result.eig_interp !== nothing ||
         error("no band energies available for interpolation (isolated case without .eig)")
-    irvec, ndegen = wigner_seitz(model.lattice, model.kgrid.mp_grid)
-    Hr, _ = build_hr(result.U, result.eig_interp, model.kgrid, irvec)
     if use_ws_distance
+        irvec, ndegen = wigner_seitz(model.lattice, model.kgrid.mp_grid)
+        Hr, _ = build_hr(result.U, result.eig_interp, model.kgrid, irvec)
         return interpolate_bands_ws(Hr, irvec, ndegen, result.spread.centres,
                                     model.lattice, model.kgrid.mp_grid, kpts)
     end
-    return interpolate_bands(Hr, irvec, ndegen, kpts)
+    return bands(hamiltonian_operator(model, result), kpts)
 end

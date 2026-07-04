@@ -139,8 +139,8 @@ Write `seedname_tb.dat`: lattice + `<0n|H|Rm>` + `<0n|r|Rm>`.
 - ndegen `(15I5)`
 - H part: per R, a blank line then `(3I5)` irvec, then rows `(2I5,3x,2(E15.8,1x))`
   = j i Re(H) Im(H), value `Hr[j,i,irpt]`
-- r part: same block structure; the position operator `<0n|r|Rm>` is written as
-  zeros (TODO: r-matrices not yet computed) but the block layout is valid.
+- r part: same block structure with 6 reals per row (3 complex Cartesian components);
+  pass `pos` (nw × nw × nrpts × 3, from `position_operator`) or zeros are written.
 
 `lattice.A` has lattice vectors as COLUMNS (Å); the reference stores
 `real_lattice(k,:) = a_k` (rows), so we emit the columns of `lattice.A`.
@@ -148,6 +148,7 @@ Write `seedname_tb.dat`: lattice + `<0n|H|Rm>` + `<0n|r|Rm>`.
 function write_tb(path::AbstractString, lattice, num_wann::Integer,
                   irvec::Vector{NTuple{3,Int}}, ndegen::Vector{Int},
                   Hr::Array{ComplexF64,3};
+                  pos::Union{Nothing,Array{ComplexF64,4}}=nothing,
                   header::AbstractString="written by Wannier90.jl")
     nrpts = length(irvec)
     A = lattice.A          # columns are a_1,a_2,a_3 (Å)
@@ -183,17 +184,21 @@ function write_tb(path::AbstractString, lattice, num_wann::Integer,
                         fortran_e(real(h), 15, 8), fortran_e(imag(h), 15, 8))
             end
         end
-        # r part: <0n|r|Rm>. TODO: r-matrices (position operator) not yet computed;
-        # written as zeros so downstream parsers see a structurally valid block.
+        # r part: <0n|r|Rm> — three complex Cartesian components per element. `pos` is
+        # (nw × nw × nrpts × 3) from `position_operator`; if absent, zeros keep the
+        # block structurally valid.
         for irpt in 1:nrpts
             R1, R2, R3 = irvec[irpt]
             print(io, "\n")
             @printf(io, "%5d%5d%5d\n", R1, R2, R3)
             for i in 1:num_wann, j in 1:num_wann
-                z = fortran_e(0.0, 15, 8)
+                r1, r2, r3 = pos === nothing ? (0.0im, 0.0im, 0.0im) :
+                    (pos[j, i, irpt, 1], pos[j, i, irpt, 2], pos[j, i, irpt, 3])
                 # '(2I5,3x,6(E15.8,1x))': single 1x between values; trailing 1x suppressed.
                 @printf(io, "%5d%5d   %s %s %s %s %s %s\n", j, i,
-                        z, z, z, z, z, z)
+                        fortran_e(real(r1), 15, 8), fortran_e(imag(r1), 15, 8),
+                        fortran_e(real(r2), 15, 8), fortran_e(imag(r2), 15, 8),
+                        fortran_e(real(r3), 15, 8), fortran_e(imag(r3), 15, 8))
             end
         end
     end
