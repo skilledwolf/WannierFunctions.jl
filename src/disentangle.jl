@@ -120,8 +120,19 @@ function dis_proj_froz!(Uopt, wd::WindowData, num_wann::Int)
             CQPQ = Hermitian(Q * Ps * Q)
             F = eigen(CQPQ)                              # ascending eigenvalues
             nsel = num_wann - nf
-            # take the nsel largest eigenvectors
+            # Take the nsel largest eigenvectors. Because CQPQ = Q Pₛ Q has support only on the
+            # non-frozen subspace (Q kills frozen directions), these are orthogonal to the frozen
+            # bands by construction — the frozen directions are eigenvectors of eigenvalue 0.
+            # NB: the reference applies an extra "ortho-fix" for the pathological case where a
+            # *required* non-frozen eigenvalue is itself ≈0 (degenerate with the frozen null space),
+            # which can make the largest-eigenvalue selection ambiguous. That fix is not ported; the
+            # check below flags the situation instead of silently mis-selecting. It has not been hit
+            # by any validated case (silicon, copper).
             vecs = F.vectors[:, nd-nsel+1:nd]
+            if F.values[nd-nsel+1] < 1e-8
+                @warn "dis_proj_froz: near-zero QPQ eigenvalue at k=$k; frozen-window selection " *
+                      "may be ambiguous (reference ortho-fix not implemented)" eval=F.values[nd-nsel+1]
+            end
             Unew = zeros(ComplexF64, nd, num_wann)
             for (col, l) in enumerate(nf+1:num_wann)
                 Unew[:, l] = vecs[:, col]
