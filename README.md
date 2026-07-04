@@ -55,6 +55,10 @@ The tiny residuals on GaAs/copper (~4e-8) are the CODATA bohr-radius constant at
 (their `.win` cells are in bohr); diamond/silicon (cells in Å) match to machine precision. No
 benchmark numbers are invented — see `docs/reference-notes/` for provenance.
 
+The four reference cases are all FCC single-shell meshes, so the test suite additionally covers the
+multi-shell B1 weight solve on a synthetic tetragonal mesh (two shells, completeness to 1e-16), the
+`use_ws_distance` grid invariant, and the k-path discontinuity handling — 209 tests in total.
+
 Not yet implemented: the Γ-only real-gauge minimiser, `.chk` interchange, guiding-centre branch
 selection, and `postw90.x` post-processing — see the roadmap. (The `use_ws_distance` minimal-image
 interpolation refinement — the reference default — *is* implemented and validated against the

@@ -221,7 +221,14 @@ function disentangle(model::Model, win::WinInput;
     bv = model.bvectors
     kpb = bv.kpb
     nk = nkpt(model.kgrid)
-    eig = sort(model.eig, dims=1)                      # ensure ascending per k
+    # The reference assumes the .eig band order is ascending per k (window selection relies on it).
+    # Do NOT sort here: sorting the energies without also permuting the A/M rows would desync them.
+    eig = model.eig
+    for k in 1:nk
+        issorted(@view eig[:, k]) ||
+            @warn "eig at k=$k is not ascending; disentanglement windowing assumes ascending band " *
+                  "order (matching the reference). Tiny inversions among degenerate bands are benign." maxlog=1
+    end
 
     wd = dis_windows(eig, win, nw)
     eigwin, Awin, Mwin = slim_data(eig, model.A, model.M, kpb, wd)
