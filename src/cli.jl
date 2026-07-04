@@ -44,6 +44,26 @@ function main(seedname::AbstractString; pp::Bool=false, write_files::Bool=true, 
     # (or a later restart) consume our result at full precision.
     write_chk(seedname * ".chk", Checkpoint(model, win, result))
 
+    if _winflag(win, "berry", false)
+        task = lowercase(get(win.raw, "berry_task", ""))
+        if occursin("ahc", task) && haskey(win.raw, "fermi_energy")
+            ef = parse_f64(win.raw["fermi_energy"])
+            km = haskey(win.raw, "berry_kmesh") ?
+                 Tuple(parse.(Int, split(win.raw["berry_kmesh"]))) : (25, 25, 25)
+            length(km) == 1 && (km = (km[1], km[1], km[1]))
+            bm = BerryModel(Checkpoint(model, win, result), model.eig, model.bvectors,
+                            model.kgrid, model.lattice)
+            ahc = anomalous_hall(bm; fermi_energy=ef, kmesh=km)
+            verbose && @info "AHC (S/cm)" x = ahc[1] y = ahc[2] z = ahc[3] kmesh = km
+            open(seedname * ".wpout", "a") do io
+                @printf(io, "\n AHC (S/cm)       x          y          z\n")
+                @printf(io, " ==========%11.4f%11.4f%11.4f\n", ahc[1], ahc[2], ahc[3])
+            end
+        else
+            @warn "berry=true: only berry_task=ahc with fermi_energy set is supported" task
+        end
+    end
+
     if _winflag(win, "wannier_plot", false)
         try
             paths = plot_wannier_functions(model, win, result; seedname=seedname)

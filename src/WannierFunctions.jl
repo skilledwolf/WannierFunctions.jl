@@ -30,6 +30,7 @@ include("nnkp.jl")
 include("chk.jl")
 include("plot.jl")
 include("scdm.jl")
+include("berry.jl")
 include("wout.jl")
 include("cli.jl")
 include("show.jl")
@@ -48,6 +49,7 @@ export generate_nnkp, write_nnkp, parse_projections, parse_exclude_bands, Projec
 export Checkpoint, read_chk, write_chk, read_chk_fmt, write_chk_fmt
 export read_unk, plot_wannier_functions, write_xsf, parse_range_list
 export scdm_projections, write_amn
+export BerryModel, berry_curvature_k, anomalous_hall
 export TBOperator, hamiltonian_operator, position_operator, bands, fourier_to_R
 
 """

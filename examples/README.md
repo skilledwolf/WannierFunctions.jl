@@ -21,6 +21,8 @@ have it under `reference/wannier90` (otherwise it prints instructions).
 Each script prints its result next to the corresponding reference Wannier90 benchmark number, so
 you can see the agreement directly.
 
+| `05_berry_ahc.jl` | bcc Fe, 18 WF (SOC) | **Berry curvature + anomalous Hall conductivity** from a finished run's checkpoint; reproduces `postw90.x` digit-for-digit. |
+
 ## Command-line equivalent
 
 Anything the scripts do, the drop-in CLI does from the shell — e.g. the diamond example is

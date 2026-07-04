@@ -155,10 +155,31 @@ byte-identical to `wannier90.x -pp` on the Pt (SOC) test input.
 XCrySDen `.xsf` volumetric grids — all four GaAs Wannier functions match the reference output to
 the file's e13.5 precision, including the global phase convention.
 
+## Post-processing: Berry curvature and the anomalous Hall conductivity
+
+The first slice of `postw90.x` functionality is implemented on the operator layer
+(`berry_task = ahc`): `BerryModel(seedname)` consumes any completed run (checkpoint + `.eig` +
+`.mmn`), builds H(R) and the Berry connection A(R) with the exact postw90 conventions, and
+`anomalous_hall(bm; fermi_energy, kmesh)` integrates the occupied-manifold Berry curvature
+(WYSV J0/J1/J2 decomposition). Validated on the bcc-Fe reference case — spinor, 28 bands
+disentangled to 18 WFs — reproducing `postw90.x` **to every printed digit**:
+σ = (0.0334, 0.0572, 1222.1510) S/cm on the benchmark 10³ mesh, in under a second on 8 threads.
+A time-reversal-symmetric insulator (diamond) integrates to zero as it must. The CLI honours
+`berry = true` / `berry_task = ahc` / `berry_kmesh` / `fermi_energy` from the `.win`.
+
+**SCDM automatic projections**: `scdm_projections(model; dir)` computes initial projections
+directly from the UNK wavefunctions (QRCP column selection, isolated/erfc/gaussian smearing) —
+no `projections` block needed. On GaAs, an SCDM start converges to the identical
+gauge-invariant minimum (Ω = 4.466880976) as the hand-chosen sp³ projections.
+
+Both `.chk` (binary) and `.chk.fmt` (formatted) checkpoints read and write, validated bit-exact
+against `w90chk2chk.x` conversions.
+
 ## Roadmap
 
+- More postw90 surface on the same layer: orbital magnetisation, spin Hall, optical (Kubo),
+  Boltzmann transport; adaptive k-mesh refinement.
 - `guiding_centres` branch selection; Γ-only real-orthogonal parity mode; `.cube` plot output.
-- `.chk.fmt` (formatted transport variant of the checkpoint; the binary `.chk` is supported).
 - Berry-phase observables on top of `TBOperator` (the position operator is already in place).
 - Projectability-based (`dis_froz_proj`) and symmetry-adapted (SAWF) variants; `postw90.x`
   post-processing (BoltzWann, AHC, …) is out of scope for the core.

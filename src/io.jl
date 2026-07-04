@@ -21,6 +21,7 @@ const SUPPORTED_KEYWORDS = Set{String}([
     "bands_plot", "bands_num_points", "write_hr", "hr_plot", "write_tb", "guiding_centres",
     "postproc_setup", "exclude_bands", "gamma_only", "spinors",
     "wannier_plot", "wannier_plot_list", "wannier_plot_supercell", "wannier_plot_format",
+    "berry", "berry_task", "berry_kmesh", "fermi_energy",
 ])
 const IGNORED_KEYWORDS = Set{String}([
     "wvfn_formatted", "num_print_cycles", "iprint", "timing_level",

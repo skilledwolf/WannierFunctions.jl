@@ -693,3 +693,44 @@ end
         @test_skip false
     end
 end
+
+# =========================================================================
+# (13) BERRY CURVATURE / AHC
+# =========================================================================
+@testset "Berry curvature / AHC" begin
+    # Time-reversal-symmetric insulator: AHC must vanish (CI-safe physics invariant).
+    if DIAMOND_MODEL !== nothing
+        win = read_win(DIAMOND_SEED * ".win")
+        res = run_wannier(DIAMOND_MODEL, win)
+        chk = Checkpoint(DIAMOND_MODEL, win, res)
+        bm = BerryModel(chk, DIAMOND_MODEL.eig, DIAMOND_MODEL.bvectors,
+                        DIAMOND_MODEL.kgrid, DIAMOND_MODEL.lattice)
+        ahc = anomalous_hall(bm; fermi_energy = 10.0, kmesh = (4, 4, 4))  # gap: 4 bands filled
+        # Time reversal ⇒ AHC = 0 exactly only for the full BZ integral; a coarse 4³ sum
+        # leaves cancellation residuals of a few µS/cm (vs Fe's ~1222 S/cm signal).
+        @test maximum(abs.(ahc)) < 1e-4
+    else
+        @test_skip false
+    end
+
+    # Fe (spinor, disentangled, magnetic): match the postw90 benchmark on its 10³ mesh.
+    fed = joinpath(REFROOT, "testpostw90_fe_ahc")
+    if isfile(joinpath(fed, "Fe.chk.fmt.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = mktempdir()
+        for f in ("Fe.win", "Fe.eig")
+            cp(joinpath(fed, f), joinpath(tmp, f))
+        end
+        run(pipeline(`bunzip2 -kc $(joinpath(fed, "Fe.chk.fmt.bz2"))`,
+                     stdout = joinpath(tmp, "Fe.chk.fmt")))
+        run(pipeline(`bunzip2 -kc $(joinpath(fed, "Fe.mmn.bz2"))`,
+                     stdout = joinpath(tmp, "Fe.mmn")))
+        bm = BerryModel(joinpath(tmp, "Fe"))
+        ahc = anomalous_hall(bm; fermi_energy = 12.6279, kmesh = (10, 10, 10))
+        # harness tolerances for AHC: abs 1e-3, rel 2e-3
+        @test ahc[1] ≈ 0.0334 atol = 1e-3
+        @test ahc[2] ≈ 0.0572 atol = 1e-3
+        @test ahc[3] ≈ 1222.1510 rtol = 2e-3
+    else
+        @test_skip false
+    end
+end
