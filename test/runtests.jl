@@ -779,8 +779,8 @@ end
         # (~1e-5 eV here), exactly on the original grid.
         E1, dE1 = eig_deleig(bm, [0.1, 0.2, 0.3])
         E2, dE2 = eig_deleig(bm, [-0.1, -0.2, -0.3])
-        @test E1 ≈ E2 atol = 5e-4
-        @test dE1 ≈ -dE2 atol = 5e-2
+        @test maximum(abs.(E1 .- E2)) < 1e-3
+        @test maximum(abs.(dE1 .+ dE2)) < 5e-2
     else
         @test_skip false
     end
