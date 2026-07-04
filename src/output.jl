@@ -155,13 +155,14 @@ function write_tb(path::AbstractString, lattice, num_wann::Integer,
         println(io, " ", header)
         # a_1, a_2, a_3 (each is a column of A). The reference writes these
         # list-directed (`write(*,*) real_lattice(k,:)`) at full ~17-sig-fig
-        # precision, NOT E15.8. gfortran right-justifies each value in a 21-char
-        # field (sign slot + 0.16f), joins with 8 spaces, trailing 5 spaces —
-        # matched byte-for-byte against the oracle _tb.dat.
-        fld(v) = lpad(@sprintf("%.16f", v), 21)
+        # precision, NOT E15.8. gfortran right-justifies each `%.16f` value so its
+        # last digit lands at cols 21/47/73 (field widths 21, 26, 26) with a
+        # trailing 5 spaces — matched byte-for-byte against the oracle _tb.dat.
         for k in 1:3
-            println(io, fld(A[1, k]) * "        " * fld(A[2, k]) *
-                        "        " * fld(A[3, k]) * "     ")
+            v1 = lpad(@sprintf("%.16f", A[1, k]), 21)
+            v2 = lpad(@sprintf("%.16f", A[2, k]), 26)
+            v3 = lpad(@sprintf("%.16f", A[3, k]), 26)
+            println(io, v1 * v2 * v3 * "     ")
         end
         println(io, "          ", num_wann)
         println(io, "          ", nrpts)

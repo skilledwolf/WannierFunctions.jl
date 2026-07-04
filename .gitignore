@@ -6,3 +6,6 @@ reference/
 scratch/
 *.o
 *.mod
+examples/data/*_band.*
+examples/data/*.wout
+examples/data/silicon.*
