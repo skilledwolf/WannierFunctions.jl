@@ -128,13 +128,8 @@ function BerryModel(seedname::AbstractString)
     return BerryModel(chk, eig, bv, kgrid, lattice)
 end
 
-"""
-    berry_curvature_k(bm, kfrac, fermi_energy) -> SVector{3,Float64}
-
-Occupied-manifold Berry curvature −2 Im f(k) (Ų, axial components yz/zx/xy) at one
-fractional k-point, as the J0+J1+J2 sum.
-"""
-function berry_curvature_k(bm::BerryModel, kfrac::AbstractVector, fermi_energy::Float64)
+"Interpolated k-space data shared by all Fermi levels at one k: E, U, A, Ω̄, rotated velocity."
+function _berry_kdata(bm::BerryModel, kfrac::AbstractVector)
     nw = num_wann(bm)
     H = zeros(ComplexF64, nw, nw)
     dH = [zeros(ComplexF64, nw, nw) for _ in 1:3]
@@ -155,38 +150,102 @@ function berry_curvature_k(bm::BerryModel, kfrac::AbstractVector, fermi_energy::
             Ω̄[i] .+= (fac * im) .* (R[α] .* bm.Ar[:, :, ir, β] .- R[β] .* bm.Ar[:, :, ir, α])
         end
     end
-
     F = eigen(Hermitian((H + H') / 2))
     E, U = F.values, F.vectors
+    dHh = [U' * dH[c] * U for c in 1:3]     # velocity in the Hamiltonian gauge
+    return (; E, U, A, Ω̄, dHh)
+end
 
-    # occupation matrix in the Wannier gauge (T = 0 step function)
+"Occupied-manifold curvature (J0+J1+J2, Ų) at one Fermi level from shared k-data."
+function _imf_kdata(kd, fermi_energy::Float64)
+    E, U = kd.E, kd.U
+    nw = length(E)
     occ = Float64.(E .< fermi_energy)
     f = U * Diagonal(occ) * U'
-
-    # J± matrices: energy-denominator velocity blocks, rotated back to the Wannier gauge.
     JJp = [zeros(ComplexF64, nw, nw) for _ in 1:3]
     JJm = [zeros(ComplexF64, nw, nw) for _ in 1:3]
     for c in 1:3
-        dHh = U' * dH[c] * U
         for m in 1:nw, n in 1:nw
             if E[n] > fermi_energy && E[m] < fermi_energy       # n empty, m occupied
-                JJp[c][n, m] = im * dHh[n, m] / (E[m] - E[n])
-                JJm[c][m, n] = im * dHh[m, n] / (E[n] - E[m])
+                JJp[c][n, m] = im * kd.dHh[c][n, m] / (E[m] - E[n])
+                JJm[c][m, n] = im * kd.dHh[c][m, n] / (E[n] - E[m])
             end
         end
         JJp[c] = U * JJp[c] * U'
         JJm[c] = U * JJm[c] * U'
     end
-
     imf = MVector{3,Float64}(0, 0, 0)
     for i in 1:3
         α, β = ALPHA_A[i], BETA_A[i]
-        J0 = real(tr(f * Ω̄[i]))
-        J1 = -2.0 * (imag(tr(A[α] * JJp[β])) + imag(tr(JJm[α] * A[β])))
+        J0 = real(tr(f * kd.Ω̄[i]))
+        J1 = -2.0 * (imag(tr(kd.A[α] * JJp[β])) + imag(tr(JJm[α] * kd.A[β])))
         J2 = -2.0 * imag(tr(JJm[α] * JJp[β]))
         imf[i] = J0 + J1 + J2
     end
     return SVector(imf)
+end
+
+"""
+    berry_curvature_k(bm, kfrac, fermi_energy) -> SVector{3,Float64}
+
+Occupied-manifold Berry curvature −2 Im f(k) (Ų, axial components yz/zx/xy) at one
+fractional k-point, as the J0+J1+J2 sum.
+"""
+berry_curvature_k(bm::BerryModel, kfrac::AbstractVector, fermi_energy::Float64) =
+    _imf_kdata(_berry_kdata(bm, kfrac), fermi_energy)
+
+"""
+    ahc_fermiscan(bm; fermi_energies, kmesh, adpt_kmesh=1, adpt_thresh=100.0) -> Matrix
+
+AHC (S/cm) for a list of Fermi energies (3 × nf matrix), with postw90's adaptive k-mesh
+refinement: any coarse point whose curvature norm exceeds `adpt_thresh` (Ų) at some Fermi
+level is re-evaluated on an `adpt_kmesh`³ sub-mesh centred on it (replacing the coarse value
+for the triggered levels only). `adpt_kmesh = 1` disables refinement.
+"""
+function ahc_fermiscan(bm::BerryModel; fermi_energies::Vector{Float64},
+                       kmesh::NTuple{3,Int}=(25, 25, 25),
+                       adpt_kmesh::Int=1, adpt_thresh::Float64=100.0)
+    nf = length(fermi_energies)
+    nktot = prod(kmesh)
+    db = SVector(1.0 / kmesh[1], 1.0 / kmesh[2], 1.0 / kmesh[3])
+    na = adpt_kmesh
+    # sub-mesh offsets centred on the coarse point (berry.F90:617-626)
+    adkpt = [SVector(db[1] * ((i + 0.5) / na - 0.5),
+                     db[2] * ((j + 0.5) / na - 0.5),
+                     db[3] * ((k + 0.5) / na - 0.5))
+             for i in 0:na-1 for j in 0:na-1 for k in 0:na-1]
+
+    kl = [SVector(i / kmesh[1], j / kmesh[2], k / kmesh[3])
+          for i in 0:kmesh[1]-1 for j in 0:kmesh[2]-1 for k in 0:kmesh[3]-1]
+    kw = 1.0 / nktot
+    per_k = Vector{Matrix{Float64}}(undef, nktot)
+    Threads.@threads for idx in 1:nktot
+        acc = zeros(3, nf)
+        kd = _berry_kdata(bm, kl[idx])
+        ladpt = falses(nf)
+        for (ife, ef) in enumerate(fermi_energies)
+            imf = _imf_kdata(kd, ef)
+            if na > 1 && norm(imf) > adpt_thresh
+                ladpt[ife] = true                       # coarse value discarded
+            else
+                acc[:, ife] .+= imf .* kw
+            end
+        end
+        if any(ladpt)
+            kwa = kw / na^3
+            for off in adkpt
+                kda = _berry_kdata(bm, kl[idx] + off)
+                for (ife, ef) in enumerate(fermi_energies)
+                    ladpt[ife] || continue
+                    acc[:, ife] .+= _imf_kdata(kda, ef) .* kwa
+                end
+            end
+        end
+        per_k[idx] = acc
+    end
+    imf_tot = sum(per_k)
+    fac = -1.0e8 * ELEM_CHARGE_SI^2 / (HBAR_SI * cell_volume(bm.lattice))
+    return fac .* imf_tot
 end
 
 """
@@ -197,15 +256,6 @@ average over a uniform `kmesh` (postw90's `berry_task = ahc` with no adaptive re
 """
 function anomalous_hall(bm::BerryModel; fermi_energy::Float64,
                         kmesh::NTuple{3,Int}=(25, 25, 25))
-    nktot = prod(kmesh)
-    kl = [(i, j, k) for i in 0:kmesh[1]-1 for j in 0:kmesh[2]-1 for k in 0:kmesh[3]-1]
-    per_k = Vector{SVector{3,Float64}}(undef, nktot)
-    Threads.@threads for idx in 1:nktot
-        i, j, k = kl[idx]
-        kf = SVector(i / kmesh[1], j / kmesh[2], k / kmesh[3])
-        per_k[idx] = berry_curvature_k(bm, kf, fermi_energy)
-    end
-    imf = sum(per_k) ./ nktot
-    fac = -1.0e8 * ELEM_CHARGE_SI^2 / (HBAR_SI * cell_volume(bm.lattice))
-    return fac .* imf
+    out = ahc_fermiscan(bm; fermi_energies=[fermi_energy], kmesh=kmesh)
+    return SVector(out[1, 1], out[2, 1], out[3, 1])
 end
