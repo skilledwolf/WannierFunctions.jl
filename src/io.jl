@@ -61,7 +61,7 @@ function _validate_win(raw::Dict{String,String}, blocks::Dict{String,Vector{Stri
         key in IGNORED_KEYWORDS && continue
         if key in W90_KNOWN_KEYWORDS
             @warn "$path: keyword `$key` is recognised (a wannier90 keyword) but not supported " *
-                  "by Wannier90.jl — ignoring it" _id = Symbol(:unsup_, key) maxlog = 1
+                  "by WannierFunctions.jl — ignoring it" _id = Symbol(:unsup_, key) maxlog = 1
         else
             sugg = _closest(key, union(W90_KNOWN_KEYWORDS, SUPPORTED_KEYWORDS))
             msg = "$path: unknown keyword `$key`" * (isempty(sugg) ? "" : " — did you mean `$sugg`?")
@@ -71,7 +71,7 @@ function _validate_win(raw::Dict{String,String}, blocks::Dict{String,Vector{Stri
     for name in keys(blocks)
         name in SUPPORTED_BLOCKS && continue
         if name in W90_KNOWN_BLOCKS || name in W90_KNOWN_KEYWORDS
-            @warn "$path: block `$name` is recognised but not supported by Wannier90.jl — " *
+            @warn "$path: block `$name` is recognised but not supported by WannierFunctions.jl — " *
                   "ignoring it" _id = Symbol(:unsupblk_, name) maxlog = 1
         else
             sugg = _closest(name, union(W90_KNOWN_BLOCKS, SUPPORTED_BLOCKS))

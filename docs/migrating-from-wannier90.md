@@ -21,7 +21,7 @@ Steps 1–3 are unchanged: keep producing `.amn/.mmn/.eig` exactly as before. Th
 replaces **step 4**:
 
 ```julia
-using Wannier90
+using WannierFunctions
 
 model = read_model("seedname")               # reads .win/.amn/.mmn/.eig
 res   = run_wannier(model)                   # ← replaces the wannier90.x minimiser

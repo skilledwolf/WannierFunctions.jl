@@ -1,6 +1,6 @@
 # Drop-in command-line driver: read `seedname.win` (+ .amn/.mmn/.eig), run the full
 # wannierisation + interpolation pipeline, and write the standard output files, mirroring
-# `wannier90.x`. Entry point `Wannier90.main(seedname)`; see bin/wannier90.jl for the CLI wrapper.
+# `wannier90.x`. Entry point `WannierFunctions.main(seedname)`; see bin/wannier90.jl for the CLI wrapper.
 
 using Printf
 
@@ -28,7 +28,7 @@ function main(seedname::AbstractString; pp::Bool=false, write_files::Bool=true, 
     model = read_model(seedname)
     win = read_win(seedname * ".win")
 
-    verbose && @info "Wannier90.jl" seedname num_wann=model.num_wann num_bands=model.num_bands nkpt=nkpt(model.kgrid)
+    verbose && @info "WannierFunctions.jl" seedname num_wann=model.num_wann num_bands=model.num_bands nkpt=nkpt(model.kgrid)
     _winflag(win, "guiding_centres", false) &&
         @warn "guiding_centres is set but not yet supported; using the principal Im-ln branch " *
               "(results may differ for poorly-localised initial projections)"

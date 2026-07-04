@@ -1,6 +1,6 @@
 # Examples
 
-Runnable examples for `Wannier90.jl`. Run each from the repository root:
+Runnable examples for `WannierFunctions.jl`. Run each from the repository root:
 
 ```bash
 julia --project=. examples/01_gaas_localization.jl

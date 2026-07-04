@@ -1,7 +1,7 @@
 using Test
 using LinearAlgebra
 using StaticArrays
-using Wannier90
+using WannierFunctions
 
 # ---------------------------------------------------------------------------
 # Reference-tree location. All validation (and most unit) tests read the GaAs
@@ -23,7 +23,7 @@ const GAAS_MODEL    = has_gaas()    ? read_model(GAAS_SEED)    : nothing
 const DIAMOND_MODEL = has_diamond() ? read_model(DIAMOND_SEED) : nothing
 
 "Σ_b w_b b_α b_β at a single k-point (the per-k B1 completeness matrix)."
-function b1_matrix(bv::Wannier90.BVectors, k::Int)
+function b1_matrix(bv::WannierFunctions.BVectors, k::Int)
     S = zeros(3, 3)
     for b in 1:bv.nntot
         w = bv.wb[b, k]
@@ -88,7 +88,7 @@ end
                 continue
             end
             bv = model.bvectors
-            nk = Wannier90.nkpt(model.kgrid)
+            nk = WannierFunctions.nkpt(model.kgrid)
             # Completeness is a PER-K relation; check every k-point.
             for k in 1:nk
                 @test b1_matrix(bv, k) ≈ Matrix(I, 3, 3) atol = 1e-8
@@ -350,7 +350,7 @@ end
         end kpoint_path
         """)
         win = read_win(winpath)
-        lat = Wannier90.Lattice(win.unit_cell)
+        lat = WannierFunctions.Lattice(win.unit_cell)
         kpts, xvals, labels, lidx = generate_kpath(win, lat; bands_num_points = 10)
         # A, B, C (end of the discontinuous 2nd segment), D (start of 3rd), A → 5 labels
         @test "C" in labels
@@ -368,9 +368,9 @@ end
 @testset "Multi-shell kmesh (tetragonal)" begin
     mp = (2, 2, 2)
     A = SMatrix{3,3,Float64}([1.0 0 0; 0 1.0 0; 0 0 2.0])   # a=a=1, c=2 → two shells needed
-    lat = Wannier90.Lattice(A)
+    lat = WannierFunctions.Lattice(A)
     kfrac = vec([SVector(x, y, z) for x in (0.0, 0.5), y in (0.0, 0.5), z in (0.0, 0.5)])
-    kg = Wannier90.KGrid(kfrac, mp)
+    kg = WannierFunctions.KGrid(kfrac, mp)
     dirs = [SVector(0.5,0,0), SVector(-0.5,0,0), SVector(0,0.5,0),
             SVector(0,-0.5,0), SVector(0,0,0.5), SVector(0,0,-0.5)]
     nk = length(kfrac); nntot = length(dirs)
@@ -380,7 +380,7 @@ end
         kp = findfirst(kp -> norm(round.(target - kfrac[kp]) - (target - kfrac[kp])) < 1e-9, 1:nk)
         gpb[:, b, k] = round.(Int, target - kfrac[kp]); kpb[b, k] = kp
     end
-    bv = Wannier90.build_bvectors(kg, lat, kpb, gpb)        # errors if B1 not satisfied
+    bv = WannierFunctions.build_bvectors(kg, lat, kpb, gpb)        # errors if B1 not satisfied
     @test length(bv.shells) == 2                            # two distinct shell radii
     @test bv.shell_weight[1] != bv.shell_weight[2]          # genuinely different weights
     # Explicit B1 completeness Σ_b w_b b⊗b = I.

@@ -8,7 +8,7 @@ the standard `.win` / `.amn` / `.mmn` / `.eig` file formats.
 This is an independent, from-scratch reimplementation; it is not affiliated with the official
 Wannier90 project.
 """
-module Wannier90
+module WannierFunctions
 
 using LinearAlgebra
 using StaticArrays

@@ -5,7 +5,7 @@
 #
 #   julia --project=. examples/02_diamond_interpolation.jl
 #
-using Wannier90
+using WannierFunctions
 using Printf
 
 seed = joinpath(@__DIR__, "data", "diamond")

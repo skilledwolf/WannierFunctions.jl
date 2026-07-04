@@ -297,7 +297,7 @@ function write_nnkp(path::AbstractString, lattice::Lattice, kfrac::Vector{SVecto
     nk = length(kfrac)
     nntot = size(nnlist, 2)
     open(path, "w") do io
-        println(io, "# File written by Wannier90.jl\n")
+        println(io, "# File written by WannierFunctions.jl\n")
         println(io, "calc_only_A  :  ", calc_only_A ? "T" : "F", "\n")
         println(io, "begin real_lattice")
         for i in 1:3   # row i = lattice vector a_i (columns of lattice.A)

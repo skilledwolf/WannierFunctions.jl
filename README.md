@@ -1,4 +1,4 @@
-# Wannier90.jl
+# WannierFunctions.jl
 
 A modern Julia reimplementation of the Wannier90 core (`wannier90.x`): construction of
 **maximally-localised Wannier functions** (MLWF) and **Wannier interpolation** of band
@@ -85,7 +85,7 @@ One call runs the whole pipeline — it auto-selects disentanglement when `num_b
 and returns a result you can interpolate. Using the shipped diamond example:
 
 ```julia
-using Wannier90
+using WannierFunctions
 
 model = read_model("examples/data/diamond")   # .win/.amn/.mmn/.eig; rich show in the REPL
 res   = run_wannier(model)                    # :rcg optimiser, true convergence

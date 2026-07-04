@@ -64,7 +64,7 @@ Write `seedname_hr.dat`. Layout:
 function write_hr(path::AbstractString, num_wann::Integer,
                   irvec::Vector{NTuple{3,Int}}, ndegen::Vector{Int},
                   Hr::Array{ComplexF64,3};
-                  header::AbstractString="written by Wannier90.jl")
+                  header::AbstractString="written by WannierFunctions.jl")
     nrpts = length(irvec)
     open(path, "w") do io
         # list-directed writes: leading space, matches Fortran write(unit,*)
@@ -149,7 +149,7 @@ function write_tb(path::AbstractString, lattice, num_wann::Integer,
                   irvec::Vector{NTuple{3,Int}}, ndegen::Vector{Int},
                   Hr::Array{ComplexF64,3};
                   pos::Union{Nothing,Array{ComplexF64,4}}=nothing,
-                  header::AbstractString="written by Wannier90.jl")
+                  header::AbstractString="written by WannierFunctions.jl")
     nrpts = length(irvec)
     A = lattice.A          # columns are a_1,a_2,a_3 (Å)
     open(path, "w") do io

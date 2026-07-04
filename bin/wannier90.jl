@@ -5,17 +5,17 @@
 # requested output files, analogous to the reference `wannier90.x <seedname>`.
 #
 # Usage:
-#   julia --project=/path/to/Wannier90.jl bin/wannier90.jl <seedname>
+#   julia --project=/path/to/WannierFunctions.jl bin/wannier90.jl <seedname>
 
 import Pkg
 let proj = normpath(joinpath(@__DIR__, ".."))
     if Base.active_project() === nothing ||
-       !isfile(joinpath(dirname(Base.active_project()), "src", "Wannier90.jl"))
+       !isfile(joinpath(dirname(Base.active_project()), "src", "WannierFunctions.jl"))
         Pkg.activate(proj; io=devnull)
     end
 end
 
-using Wannier90
+using WannierFunctions
 
 pp = any(a -> a in ("-pp", "--pp", "-postproc"), ARGS)
 args = [a for a in ARGS if !(a in ("-pp", "--pp", "-postproc"))]
@@ -23,4 +23,4 @@ if isempty(args)
     println(stderr, "usage: wannier90.jl [-pp] <seedname>")
     exit(1)
 end
-Wannier90.main(replace(args[1], r"\.win$" => ""); pp=pp)
+WannierFunctions.main(replace(args[1], r"\.win$" => ""); pp=pp)

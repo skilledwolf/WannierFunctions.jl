@@ -3,7 +3,7 @@
 using Printf
 
 function Base.show(io::IO, ::MIME"text/plain", m::Model)
-    println(io, "Wannier90 Model \"", m.seedname, "\"")
+    println(io, "WannierFunctions Model \"", m.seedname, "\"")
     @printf(io, "  bands → Wannier functions : %d → %d%s\n", m.num_bands, m.num_wann,
             m.num_bands > m.num_wann ? "   (needs disentanglement)" : "   (isolated)")
     @printf(io, "  k-mesh                    : %d × %d × %d   (%d k-points)\n",

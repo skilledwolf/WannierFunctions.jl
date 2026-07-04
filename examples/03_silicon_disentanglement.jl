@@ -9,7 +9,7 @@
 #
 #   julia --project=. examples/03_silicon_disentanglement.jl
 #
-using Wannier90
+using WannierFunctions
 using Printf
 
 # Locate/stage the silicon inputs.

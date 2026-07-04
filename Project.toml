@@ -1,5 +1,5 @@
-name = "Wannier90"
-uuid = "9a7e0b21-4c3d-4f8e-b6a1-2f7c5d0e1a44"
+name = "WannierFunctions"
+uuid = "e9bfaa8f-12b4-4bc0-a903-8435a0d6c1b2"
 authors = ["Tobias Wolf <tobias.mr.wolf@gmail.com>"]
 version = "0.1.0"
 

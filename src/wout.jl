@@ -48,7 +48,7 @@ function write_wout(path::AbstractString, model::Model, win::WinInput, result::W
                     dis=nothing)
     open(path, "w") do io
         println(io, " +---------------------------------------------------------------------------+")
-        println(io, " |                          Wannier90.jl  (Julia)                            |")
+        println(io, " |                       WannierFunctions.jl  (Julia)                         |")
         println(io, " |     A modern from-scratch reimplementation of the Wannier90 core.          |")
         println(io, " |     Independent project; not affiliated with wannier-developers.           |")
         println(io, " +---------------------------------------------------------------------------+")
@@ -92,7 +92,7 @@ function write_wout(path::AbstractString, model::Model, win::WinInput, result::W
         @printf(io, "    Final Spread (Ang^2)       Omega Total  = %15.9f\n", s.Ω)
         println(io, " ------------------------------------------------------------------------------")
         println(io)
-        println(io, " All done: Wannier90.jl exiting cleanly.")
+        println(io, " All done: WannierFunctions.jl exiting cleanly.")
     end
     return path
 end

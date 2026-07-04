@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use WannierFunctions.jl in your research, please cite it as below, alongside the foundational Wannier-function methods papers (Marzari & Vanderbilt 1997; Souza, Marzari & Vanderbilt 2001; Marzari et al. 2012)."
+title: "WannierFunctions.jl: a modern Julia implementation of maximally-localised Wannier functions and Wannier interpolation"
+type: software
+authors:
+  - family-names: Wolf
+    given-names: Tobias
+    email: tobias.mr.wolf@gmail.com
+version: 0.1.0
+date-released: 2026-07-04
+license: MIT
+abstract: >
+  A from-scratch Julia implementation of the Wannier90 core: maximally-localised
+  Wannier functions (Marzari-Vanderbilt localisation, Souza-Marzari-Vanderbilt
+  disentanglement) and Wannier interpolation, drop-in compatible with the
+  .win/.amn/.mmn/.eig file formats and validated against the reference
+  Wannier90 test suite to print precision.

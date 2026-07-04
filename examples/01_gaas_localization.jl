@@ -5,7 +5,7 @@
 #
 #   julia --project=. examples/01_gaas_localization.jl
 #
-using Wannier90
+using WannierFunctions
 using Printf
 
 seed = joinpath(@__DIR__, "data", "gaas")

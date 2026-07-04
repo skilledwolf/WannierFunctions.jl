@@ -9,7 +9,7 @@
 
 import Pkg
 Pkg.activate(normpath(joinpath(@__DIR__, "..")); io=devnull)
-using Wannier90, StaticArrays, Printf
+using WannierFunctions, StaticArrays, Printf
 
 root = normpath(joinpath(@__DIR__, ".."))
 silicon = joinpath(root, "scratch", "silicon", "silicon")
@@ -23,7 +23,7 @@ function timeit(f; warmup=true)
     return (time_ns() - t0) / 1e9, out
 end
 
-@printf("Wannier90.jl benchmarks — %d thread(s)\n", Threads.nthreads())
+@printf("WannierFunctions.jl benchmarks — %d thread(s)\n", Threads.nthreads())
 @printf("%-46s %10s   %s\n", "workload", "seconds", "invariant")
 println("-"^88)
 
