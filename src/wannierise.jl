@@ -325,7 +325,12 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
             end
             s *= 0.5
         end
-        accepted || break                     # line search failed: stay at current point
+        if !accepted
+            # Line search cannot decrease Ω. With a vanishing slope this *is* convergence
+            # (we are at the minimum to within line-search resolution), not a failure.
+            converged = abs(slope) < 1e-9
+            break
+        end
 
         old_om = sr.Ω
         U, Mrot, sr = Ut, Mt, srt

@@ -23,7 +23,14 @@ end
 
 function Lattice(A::AbstractMatrix)
     Am = SMatrix{3,3,Float64}(A)
-    B = TWOPI * transpose(inv(Am))
+    # b_i = 2π (a_j × a_k) / V — the adjugate/cross-product form, matching the reference's
+    # utility_recip_lattice to the last ULP (an LU-based inv() can differ in the final digit,
+    # which shows up in fixed-format file output).
+    a1, a2, a3 = Am[:, 1], Am[:, 2], Am[:, 3]
+    V = dot(a1, cross(a2, a3))
+    B = SMatrix{3,3,Float64}(hcat(TWOPI / V * cross(a2, a3),
+                                  TWOPI / V * cross(a3, a1),
+                                  TWOPI / V * cross(a1, a2)))
     return Lattice(Am, B)
 end
 

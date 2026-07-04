@@ -8,14 +8,23 @@ _winflag(win::WinInput, key, default::Bool) = _getbool(win.raw, key, default)
 _winint(win::WinInput, key, default::Int) = _getint(win.raw, key, default)
 
 """
-    main(seedname; write_files=true, verbose=true) -> (model, win, result)
+    main(seedname; pp=false, write_files=true, verbose=true) -> (model, win, result)
 
 Run wannierisation for `seedname` and write `.wout` plus, when requested in the `.win`,
 `_hr.dat` (`write_hr`/`hr_plot`), `_tb.dat` (`write_tb`), and the band-structure files
 (`bands_plot`). Returns the model, parsed input, and result.
+
+With `pp=true` (the `-pp` flag, or `postproc_setup = .true.` in the `.win`) only the
+post-processing setup runs: the k-mesh is generated from the `.win` alone and `seedname.nnkp`
+is written for the DFT interface. No `.amn/.mmn` needed.
 """
-function main(seedname::AbstractString; write_files::Bool=true, verbose::Bool=true)
+function main(seedname::AbstractString; pp::Bool=false, write_files::Bool=true, verbose::Bool=true)
     seedname = replace(String(seedname), r"\.win$" => "")
+    if pp || _getbool(read_win(seedname * ".win").raw, "postproc_setup", false)
+        out, info = generate_nnkp(seedname)
+        verbose && @info "wrote $out" nntot=info.nntot shells=info.shells weights=info.weights
+        return nothing
+    end
     model = read_model(seedname)
     win = read_win(seedname * ".win")
 

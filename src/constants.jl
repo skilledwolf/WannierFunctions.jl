@@ -1,7 +1,10 @@
 # Physical constants and tolerances, matched to the reference Wannier90 (src/constants.F90).
 
-"Bohr radius in Ångström (CODATA, matches Wannier90 `bohr_angstrom_internal`)."
-const BOHR = 0.529177210903
+"""
+Bohr radius in Ångström. The reference Wannier90 defaults to **CODATA2006** (compile flags select
+2010/2018/2022); we match the default so bohr-specified cells reproduce reference output exactly.
+"""
+const BOHR = 0.52917720859
 
 "2π."
 const TWOPI = 2 * π

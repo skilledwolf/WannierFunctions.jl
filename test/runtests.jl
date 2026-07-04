@@ -416,3 +416,41 @@ end
         @test_skip false
     end
 end
+
+# =========================================================================
+# (7) .nnkp GENERATION (-pp mode) — the k-mesh built from the .win alone must
+#     reproduce the shells/weights derived from the .mmn connectivity, and the
+#     projections block must parse.
+# =========================================================================
+@testset ".nnkp generation (-pp)" begin
+    if GAAS_MODEL !== nothing
+        win = read_win(GAAS_SEED * ".win")
+        out, info = generate_nnkp(GAAS_SEED; out = joinpath(mktempdir(), "gaas.nnkp"))
+        @test isfile(out)
+        @test info.nntot == GAAS_MODEL.bvectors.nntot                     # 8 neighbours
+        @test length(info.weights) == length(GAAS_MODEL.bvectors.shell_weight)
+        @test info.weights[1] ≈ GAAS_MODEL.bvectors.shell_weight[1] atol = 1e-9
+        projs = parse_projections(win)
+        @test length(projs) == 4                                          # As:sp3 → 4 orbitals
+        @test all(p -> p.l == -3, projs)                                  # sp3 code
+        @test sort([p.mr for p in projs]) == [1, 2, 3, 4]
+        # nnkpts block consistency vs the .mmn-derived connectivity: the b-vector SETS at
+        # k=1 must agree (ordering may legitimately differ between the two constructions).
+        lines = readlines(out)
+        i0 = findfirst(==("begin nnkpts"), lines)
+        nn = parse(Int, lines[i0+1])
+        mine = Set{NTuple{4,Int}}()
+        for j in 1:nn
+            t = parse.(Int, split(lines[i0+1+j]))
+            push!(mine, (t[2], t[3], t[4], t[5]))
+        end
+        frommmn = Set{NTuple{4,Int}}()
+        for b in 1:GAAS_MODEL.bvectors.nntot
+            push!(frommmn, (GAAS_MODEL.bvectors.kpb[b, 1], GAAS_MODEL.bvectors.gpb[1, b, 1],
+                            GAAS_MODEL.bvectors.gpb[2, b, 1], GAAS_MODEL.bvectors.gpb[3, b, 1]))
+        end
+        @test mine == frommmn
+    else
+        @test_skip false
+    end
+end

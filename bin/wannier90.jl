@@ -17,8 +17,14 @@ end
 
 using Wannier90
 
-if isempty(ARGS)
-    println(stderr, "usage: wannier90.jl <seedname>")
+args = copy(ARGS)
+pp = false
+filter!(args) do a
+    a in ("-pp", "--pp", "-postproc") && (pp = true; return false)
+    return true
+end
+if isempty(args)
+    println(stderr, "usage: wannier90.jl [-pp] <seedname>")
     exit(1)
 end
-Wannier90.main(replace(ARGS[1], r"\.win$" => ""))
+Wannier90.main(replace(args[1], r"\.win$" => ""); pp=pp)
