@@ -15,6 +15,7 @@ using StaticArrays
 
 include("constants.jl")
 include("types.jl")
+include("known_keywords.jl")
 include("io.jl")
 include("kmesh.jl")
 include("gauge.jl")
@@ -26,6 +27,7 @@ include("pipeline.jl")
 include("output.jl")
 include("wout.jl")
 include("cli.jl")
+include("show.jl")
 
 export Lattice, KGrid, BVectors, Model
 export read_win, read_amn, read_mmn, read_eig

@@ -7,6 +7,82 @@ using StaticArrays
 parse_f64(s::AbstractString) = parse(Float64, replace(strip(s), r"[dD]" => "e"))
 
 # ---------------------------------------------------------------------------
+# Input validation. Three tiers:
+#   SUPPORTED    — consumed by this package (silent)
+#   IGNORED_OK   — recognised, genuinely irrelevant to what we compute (silent)
+#   known        — in the reference parser's catalogue but not supported here (warn once)
+#   anything else — a typo: error, with a did-you-mean suggestion
+# ---------------------------------------------------------------------------
+
+const SUPPORTED_KEYWORDS = Set{String}([
+    "num_wann", "num_bands", "mp_grid", "num_iter", "kmesh_tol", "search_shells",
+    "use_ws_distance", "dis_win_min", "dis_win_max", "dis_froz_min", "dis_froz_max",
+    "dis_num_iter", "dis_mix_ratio", "conv_tol", "conv_window", "trial_step", "num_cg_steps",
+    "bands_plot", "bands_num_points", "write_hr", "hr_plot", "write_tb", "guiding_centres",
+    "postproc_setup", "exclude_bands",
+])
+const IGNORED_KEYWORDS = Set{String}([
+    "wvfn_formatted", "num_print_cycles", "iprint", "timing_level",
+])
+const SUPPORTED_BLOCKS = Set{String}([
+    "unit_cell_cart", "kpoints", "kpoint_path", "atoms_frac", "atoms_cart", "projections",
+])
+
+"Levenshtein edit distance (for did-you-mean suggestions)."
+function _levenshtein(a::AbstractString, b::AbstractString)
+    m, n = length(a), length(b)
+    d = collect(0:n)
+    for (i, ca) in enumerate(a)
+        prev = d[1]
+        d[1] = i
+        for (j, cb) in enumerate(b)
+            cur = d[j+1]
+            d[j+1] = min(d[j+1] + 1, d[j] + 1, prev + (ca == cb ? 0 : 1))
+            prev = cur
+        end
+    end
+    return d[n+1]
+end
+
+function _closest(name::String, pool)
+    best, bestd = "", typemax(Int)
+    for cand in pool
+        dist = _levenshtein(name, cand)
+        dist < bestd && ((best, bestd) = (cand, dist))
+    end
+    return bestd <= max(2, length(name) ÷ 3) ? best : ""
+end
+
+"Validate parsed keys/blocks against the reference catalogue; error on typos."
+function _validate_win(raw::Dict{String,String}, blocks::Dict{String,Vector{String}},
+                       path::AbstractString; strict::Bool=true)
+    for key in keys(raw)
+        key in SUPPORTED_KEYWORDS && continue
+        key in IGNORED_KEYWORDS && continue
+        if key in W90_KNOWN_KEYWORDS
+            @warn "$path: keyword `$key` is recognised (a wannier90 keyword) but not supported " *
+                  "by Wannier90.jl — ignoring it" _id = Symbol(:unsup_, key) maxlog = 1
+        else
+            sugg = _closest(key, union(W90_KNOWN_KEYWORDS, SUPPORTED_KEYWORDS))
+            msg = "$path: unknown keyword `$key`" * (isempty(sugg) ? "" : " — did you mean `$sugg`?")
+            strict ? error(msg) : @warn msg
+        end
+    end
+    for name in keys(blocks)
+        name in SUPPORTED_BLOCKS && continue
+        if name in W90_KNOWN_BLOCKS || name in W90_KNOWN_KEYWORDS
+            @warn "$path: block `$name` is recognised but not supported by Wannier90.jl — " *
+                  "ignoring it" _id = Symbol(:unsupblk_, name) maxlog = 1
+        else
+            sugg = _closest(name, union(W90_KNOWN_BLOCKS, SUPPORTED_BLOCKS))
+            msg = "$path: unknown block `$name`" * (isempty(sugg) ? "" : " — did you mean `$sugg`?")
+            strict ? error(msg) : @warn msg
+        end
+    end
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
 # .win input file
 # ---------------------------------------------------------------------------
 
@@ -122,14 +198,20 @@ function _parse_kpoints(body::Vector{String})
 end
 
 """
-    read_win(path) -> WinInput
+    read_win(path; strict=true) -> WinInput
 
 Parse a Wannier90 `.win` input file. Only the parameters needed for wannierisation and
 interpolation are promoted to typed fields; the remainder stay in `raw`/`blocks`.
+
+Unknown keywords (not in the reference wannier90 parser's catalogue) are an **error** with a
+did-you-mean suggestion — a silently ignored typo like `num_itre` is worse than a hard stop.
+Recognised-but-unsupported keywords warn once and are ignored. Pass `strict=false` to downgrade
+unknown-keyword errors to warnings.
 """
-function read_win(path::AbstractString)
+function read_win(path::AbstractString; strict::Bool=true)
     text = read(path, String)
     raw, blocks = _parse_win_structure(text)
+    _validate_win(raw, blocks, path; strict=strict)
 
     haskey(raw, "num_wann") || error("$path: num_wann is required")
     num_wann = parse(Int, split(raw["num_wann"])[1])

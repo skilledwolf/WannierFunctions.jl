@@ -392,3 +392,27 @@ end
     end
     @test norm(S - I) < 1e-10
 end
+
+# =========================================================================
+# (6) OPTIMIZER PARITY — :rcg (native default) and :w90 (reference-faithful)
+#     must find the same spread minimum; :rcg must actually converge.
+# =========================================================================
+@testset "Optimizer parity (:rcg vs :w90)" begin
+    if GAAS_MODEL !== nothing
+        r_rcg = wannierise(GAAS_MODEL)                              # :rcg default
+        r_w90 = wannierise(GAAS_MODEL; algorithm = :w90, num_iter = 20)
+        @test r_rcg.converged
+        @test r_rcg.spread.Ω ≈ r_w90.spread.Ω atol = 1e-8           # same minimum
+        @test r_rcg.spread.Ω ≈ 4.466880976 atol = 2e-6              # reference value
+    else
+        @test_skip false
+    end
+    if DIAMOND_MODEL !== nothing
+        r = wannierise(DIAMOND_MODEL)
+        @test r.converged
+        @test r.spread.Ω ≈ 2.320904915 atol = 1e-6
+        @test r.spread.ΩD ≈ 0.0 atol = 1e-9
+    else
+        @test_skip false
+    end
+end

@@ -23,22 +23,26 @@ struct WindowData
 end
 
 """
-    dis_windows(eig, win) -> WindowData
+    dis_windows(eig, num_wann; win_min=-Inf, win_max=Inf, froz_min=-Inf, froz_max=nothing)
+        -> WindowData
 
-Select the outer (`dis_win_min/max`) and frozen (`dis_froz_min/max`) energy windows per k-point.
-Assumes `eig[:,k]` ascending.
+Select the outer (`win_min`/`win_max`) and frozen (`froz_min`/`froz_max`) energy windows per
+k-point (all in eV). A frozen window exists iff `froz_max !== nothing`. Assumes `eig[:,k]`
+ascending.
 """
-function dis_windows(eig::Matrix{Float64}, win::WinInput, num_wann::Int)
+function dis_windows(eig::Matrix{Float64}, num_wann::Int;
+                     win_min::Float64=-Inf, win_max::Float64=Inf,
+                     froz_min::Float64=-Inf, froz_max::Union{Nothing,Float64}=nothing)
     nb, nk = size(eig)
-    frozen = win.dis_froz_max != -Inf
+    frozen = froz_max !== nothing
     nfirstwin = zeros(Int, nk); ndimwin = zeros(Int, nk); ndimfroz = zeros(Int, nk)
     indxfroz = [Int[] for _ in 1:nk]
     indxnfroz = [Int[] for _ in 1:nk]
     lfrozen = [Bool[] for _ in 1:nk]
     for k in 1:nk
         e = @view eig[:, k]
-        imin = findfirst(i -> e[i] >= win.dis_win_min && e[i] <= win.dis_win_max, 1:nb)
-        imax = findlast(i -> e[i] <= win.dis_win_max && e[i] >= win.dis_win_min, 1:nb)
+        imin = findfirst(i -> e[i] >= win_min && e[i] <= win_max, 1:nb)
+        imax = findlast(i -> e[i] <= win_max && e[i] >= win_min, 1:nb)
         (imin === nothing || imax === nothing) && error("empty outer window at k=$k")
         nd = imax - imin + 1
         nd >= num_wann || error("ndimwin ($nd) < num_wann ($num_wann) at k=$k")
@@ -46,7 +50,7 @@ function dis_windows(eig::Matrix{Float64}, win::WinInput, num_wann::Int)
         lf = falses(nd)
         if frozen
             for i in imin:imax
-                (e[i] >= win.dis_froz_min && e[i] <= win.dis_froz_max) && (lf[i-imin+1] = true)
+                (e[i] >= froz_min && e[i] <= froz_max) && (lf[i-imin+1] = true)
             end
         end
         nf = count(lf)
@@ -207,20 +211,29 @@ struct DisentangleResult
 end
 
 """
-    disentangle(model; dis_num_iter, dis_mix_ratio, dis_conv_tol=1e-10, dis_conv_window=3,
+    disentangle(model; win_min=-Inf, win_max=Inf, froz_min=-Inf, froz_max=nothing,
+                num_iter=200, mix_ratio=0.5, conv_tol=1e-10, conv_window=3,
                 verbose=false) -> DisentangleResult
 
 Full SMV disentanglement: window selection, projection + frozen locking, Z-matrix subspace
-iteration, subspace-Hamiltonian diagonalisation, and handoff to the localiser.
+iteration, subspace-Hamiltonian diagonalisation, and handoff to the localiser. Windows are in eV;
+a frozen window exists iff `froz_max` is given. The defaults (no windows) disentangle over all
+`num_bands` states.
+
+The `disentangle(model, win::WinInput)` method pulls all of these from a parsed `.win` instead.
 """
-function disentangle(model::Model, win::WinInput;
-                     dis_num_iter::Int=win.dis_num_iter, dis_mix_ratio::Float64=win.dis_mix_ratio,
-                     dis_conv_tol::Float64=1e-10, dis_conv_window::Int=3, verbose::Bool=false)
+function disentangle(model::Model;
+                     win_min::Float64=-Inf, win_max::Float64=Inf,
+                     froz_min::Float64=-Inf, froz_max::Union{Nothing,Float64}=nothing,
+                     num_iter::Int=200, mix_ratio::Float64=0.5,
+                     conv_tol::Float64=1e-10, conv_window::Int=3, verbose::Bool=false)
     model.eig !== nothing || error("disentanglement requires band energies (.eig)")
     nw = model.num_wann
     bv = model.bvectors
     kpb = bv.kpb
     nk = nkpt(model.kgrid)
+    dis_num_iter, dis_mix_ratio = num_iter, mix_ratio
+    dis_conv_tol, dis_conv_window = conv_tol, conv_window
     # The reference assumes the .eig band order is ascending per k (window selection relies on it).
     # Do NOT sort here: sorting the energies without also permuting the A/M rows would desync them.
     eig = model.eig
@@ -230,7 +243,8 @@ function disentangle(model::Model, win::WinInput;
                   "order (matching the reference). Tiny inversions among degenerate bands are benign." maxlog=1
     end
 
-    wd = dis_windows(eig, win, nw)
+    wd = dis_windows(eig, nw; win_min=win_min, win_max=win_max,
+                     froz_min=froz_min, froz_max=froz_max)
     eigwin, Awin, Mwin = slim_data(eig, model.A, model.M, kpb, wd)
     Uopt = dis_project(Awin, wd, nw)
 
@@ -326,4 +340,13 @@ function disentangle(model::Model, win::WinInput;
     Mrot0 = rotate_overlaps(Mrot0, U0, kpb)
 
     return DisentangleResult(U0, Mrot0, eigval_opt, Uopt, omega_I, trace, niter)
+end
+
+"Compat method: pull the windows and iteration controls from a parsed `.win`."
+function disentangle(model::Model, win::WinInput; kwargs...)
+    return disentangle(model;
+        win_min=win.dis_win_min, win_max=win.dis_win_max,
+        froz_min=win.dis_froz_min,
+        froz_max=(win.dis_froz_max == -Inf ? nothing : win.dis_froz_max),
+        num_iter=win.dis_num_iter, mix_ratio=win.dis_mix_ratio, kwargs...)
 end
