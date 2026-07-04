@@ -124,22 +124,40 @@ function dis_proj_froz!(Uopt, wd::WindowData, num_wann::Int)
             CQPQ = Hermitian(Q * Ps * Q)
             F = eigen(CQPQ)                              # ascending eigenvalues
             nsel = num_wann - nf
-            # Take the nsel largest eigenvectors. Because CQPQ = Q Pₛ Q has support only on the
-            # non-frozen subspace (Q kills frozen directions), these are orthogonal to the frozen
-            # bands by construction — the frozen directions are eigenvectors of eigenvalue 0.
-            # NB: the reference applies an extra "ortho-fix" for the pathological case where a
-            # *required* non-frozen eigenvalue is itself ≈0 (degenerate with the frozen null space),
-            # which can make the largest-eigenvalue selection ambiguous. That fix is not ported; the
-            # check below flags the situation instead of silently mis-selecting. It has not been hit
-            # by any validated case (silicon, copper).
-            vecs = F.vectors[:, nd-nsel+1:nd]
-            if F.values[nd-nsel+1] < 1e-8
-                @warn "dis_proj_froz: near-zero QPQ eigenvalue at k=$k; frozen-window selection " *
-                      "may be ambiguous (reference ortho-fix not implemented)" eval=F.values[nd-nsel+1]
-            end
+            # Take the nsel largest eigenvectors of CQPQ = Q Pₛ Q (support on the non-frozen
+            # subspace; frozen directions are eigenvalue-0).
+            all(v -> -1e-8 <= v <= 1 + 1e-8, F.values) ||
+                error("dis_proj_froz: QPQ eigenvalues outside [0,1] at k=$k")
+            # Ortho-fix (reference default, disentangle.F90:2123-2227): when a *required*
+            # eigenvalue is ≈0 it is degenerate with the frozen null space of QPQ, and the
+            # returned eigenvector may point into the frozen span. Re-select those vectors by
+            # explicit orthogonality to the frozen states (a frozen state m is the unit vector
+            # e_{indxfroz[m]}, so orthogonality is |v[ifz]| ≤ eps8 for every frozen index).
+            nzero = count(j -> F.values[j] < 1e-8, nd-nsel+1:nd)
             Unew = zeros(ComplexF64, nd, num_wann)
-            for (col, l) in enumerate(nf+1:num_wann)
-                Unew[:, l] = vecs[:, col]
+            if nzero == 0
+                for (col, l) in enumerate(nf+1:num_wann)          # ascending, as the reference
+                    Unew[:, l] = F.vectors[:, nd-nsel+col]
+                end
+            else
+                goods = nsel - nzero
+                vmap = Int[nd - c + 1 for c in 1:goods]           # top eigenvectors, descending
+                for _ in 1:nzero
+                    found = 0
+                    for v in nd:-1:1
+                        v in vmap && continue
+                        if all(ifz -> abs(F.vectors[ifz, v]) <= 1e-8, wd.indxfroz[k])
+                            found = v
+                            break
+                        end
+                    end
+                    found == 0 && error("dis_proj_froz: ortho-fix failed to find enough " *
+                                        "frozen-orthogonal eigenvectors at k=$k")
+                    push!(vmap, found)
+                end
+                for (col, l) in enumerate(nf+1:num_wann)
+                    Unew[:, l] = F.vectors[:, vmap[col]]
+                end
             end
         else
             Unew = zeros(ComplexF64, nd, num_wann)

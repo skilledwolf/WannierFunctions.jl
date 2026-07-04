@@ -522,3 +522,49 @@ end
         @test_skip false
     end
 end
+
+# =========================================================================
+# (10) FROZEN-LOCKING ORTHO-FIX + exclude_bands
+# =========================================================================
+@testset "dis_proj_froz ortho-fix" begin
+    # Synthetic near-degenerate case: 4 window states, bands 1–2 frozen, 3 WFs. The third trial
+    # column leaks only ε into the non-frozen space, so the required third QPQ eigenvalue is
+    # ε² < eps8 and its eigenvector is degenerate with the frozen null space — the case the
+    # reference ortho-fix exists for. The selected non-frozen columns must come out orthogonal
+    # to the frozen states and orthonormal.
+    nd, nf, nwann = 4, 2, 3
+    ε = 1e-6
+    wd = WannierFunctions.WindowData([1], [nd], [nf], [[1, 2]], [[3, 4]],
+                                     [[true, true, false, false]], true)
+    A = zeros(ComplexF64, nd, nwann)
+    A[1, 1] = 1                       # trial 1 = frozen band 1
+    A[2, 2] = 1                       # trial 2 = frozen band 2
+    A[1, 3] = 1; A[3, 3] = ε          # trial 3 ≈ frozen band 1 + tiny non-frozen leak
+    Uopt = [WannierFunctions.svd_orthonormalize(A)]
+    WannierFunctions.dis_proj_froz!(Uopt, wd, nwann)
+    U = Uopt[1]
+    @test maximum(abs.(U' * U - I(nwann))) < 1e-10            # orthonormal columns
+    @test U[1, 1] == 1 && U[2, 2] == 1                        # frozen unit vectors
+    for l in nf+1:nwann, ifz in (1, 2)
+        @test abs(U[ifz, l]) ≤ 1e-8                           # non-frozen ⊥ frozen states
+    end
+end
+
+@testset "exclude_bands parsing" begin
+    winpath = joinpath(mktempdir(), "x.win")
+    write(winpath, """
+    num_wann = 4
+    exclude_bands = 1-3, 7, 10-11
+    mp_grid : 1 1 1
+    begin unit_cell_cart
+    1 0 0
+    0 1 0
+    0 0 1
+    end unit_cell_cart
+    begin kpoints
+    0 0 0
+    end kpoints
+    """)
+    win = read_win(winpath)
+    @test parse_exclude_bands(win) == [1, 2, 3, 7, 10, 11]
+end

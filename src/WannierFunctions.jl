@@ -42,7 +42,7 @@ export wigner_seitz, build_hr, interpolate_hk, interpolate_bands
 export ws_translate_dist, interpolate_bands_ws
 export write_hr, read_hr, write_tb, write_band_dat, write_band_kpt, write_labelinfo
 export write_wout, generate_kpath, main
-export generate_nnkp, write_nnkp, parse_projections, Projection
+export generate_nnkp, write_nnkp, parse_projections, parse_exclude_bands, Projection
 export Checkpoint, read_chk, write_chk
 export TBOperator, hamiltonian_operator, position_operator, bands, fourier_to_R
 

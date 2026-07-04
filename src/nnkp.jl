@@ -342,6 +342,27 @@ function write_nnkp(path::AbstractString, lattice::Lattice, kfrac::Vector{SVecto
 end
 
 """
+    parse_exclude_bands(win) -> Vector{Int}
+
+Parse the `exclude_bands` range list (`exclude_bands = 1-4,10`) into a sorted index list.
+"""
+function parse_exclude_bands(win::WinInput)
+    haskey(win.raw, "exclude_bands") || return Int[]
+    out = Int[]
+    for tok in split(win.raw["exclude_bands"], ',')
+        t = strip(tok)
+        isempty(t) && continue
+        m = match(r"^(\d+)\s*-\s*(\d+)$", t)
+        if m !== nothing
+            append!(out, parse(Int, m.captures[1]):parse(Int, m.captures[2]))
+        else
+            push!(out, parse(Int, t))
+        end
+    end
+    return sort!(unique!(out))
+end
+
+"""
     write_nnkp(seedname_or_win; out=...) — the `-pp` mode
 
 Generate the k-mesh from `seedname.win` alone (shell search + B1 weights + neighbour list, no
@@ -358,7 +379,7 @@ function generate_nnkp(seedname::AbstractString; out::AbstractString=seedname * 
     nnlist, nncell, nntot = build_nnlist(win.kpoints, lattice, cells, dnn, shell_list, multi;
                                          tol=win.kmesh_tol)
     projs = parse_projections(win)
-    excl = Int[]  # exclude_bands parsing: range-list keyword, not yet consumed
+    excl = parse_exclude_bands(win)
     write_nnkp(out, lattice, win.kpoints, projs, nnlist, nncell; exclude_bands=excl)
     return out, (; shells=shell_list, weights, nntot, dnn=dnn[shell_list], multi=multi[shell_list])
 end
