@@ -568,3 +568,87 @@ end
     win = read_win(winpath)
     @test parse_exclude_bands(win) == [1, 2, 3, 7, 10, 11]
 end
+
+# =========================================================================
+# (11) Γ-ONLY, SPINOR PROJECTIONS, WF PLOTTING
+# =========================================================================
+@testset "Gamma-only (silane/benzene)" begin
+    si = joinpath(REFROOT, "testw90_example07", "silane")
+    bz = joinpath(REFROOT, "testw90_benzene_gamma_val", "benzene")
+    if isfile(si * ".mmn")
+        model = read_model(si)
+        @test model.bvectors.nntot == 6            # half set expanded to the closed full set
+        res = run_wannier(model; num_iter = 500)
+        @test res.converged
+        @test res.spread.Ω ≈ 4.04498078 atol = 2e-6
+        @test res.spread.ΩI ≈ 3.920640338 atol = 1e-6
+    else
+        @test_skip false
+    end
+    if isfile(bz * ".mmn")
+        model = read_model(bz)
+        res = run_wannier(model; num_iter = 2000)
+        @test res.converged
+        @test res.spread.ΩI ≈ 10.455472666 atol = 1e-6
+        # We minimise over the full unitary group; the reference Γ algorithm restricts to real
+        # orthogonal gauges, so our converged Ω is allowed to be marginally LOWER (verified:
+        # the reference is stationary at 12.958338012 even after 20000 sweeps).
+        @test res.spread.Ω ≤ 12.958338012 + 1e-6
+        @test res.spread.Ω ≈ 12.958338012 atol = 5e-6
+    else
+        @test_skip false
+    end
+end
+
+@testset "Spinor projections + orbital ordering" begin
+    winpath = joinpath(mktempdir(), "s.win")
+    write(winpath, """
+    num_wann = 18
+    spinors = true
+    mp_grid : 1 1 1
+    begin unit_cell_cart
+    2.0 0 0
+    0 2.0 0
+    0 0 2.0
+    end unit_cell_cart
+    begin atoms_frac
+    Pt 0.0 0.0 0.0
+    end atoms_frac
+    begin projections
+    Pt: d;s;p
+    end projections
+    begin kpoints
+    0 0 0
+    end kpoints
+    """)
+    win = read_win(winpath)
+    projs = parse_projections(win)
+    @test length(projs) == 18                                  # 9 spatial × 2 spins
+    @test [p.s for p in projs[1:4]] == [1, -1, 1, -1]          # up/down interleaved
+    # ascending-l emission regardless of "d;s;p" spec order: s, p×3, d×5 (each doubled)
+    @test [p.l for p in projs[1:2:end]] == [0, 1, 1, 1, 2, 2, 2, 2, 2]
+end
+
+@testset "Wannier-function plotting (xsf)" begin
+    gd = joinpath(REFROOT, "testw90_example01")
+    if isfile(joinpath(gd, "UNK00001.1")) && GAAS_MODEL !== nothing
+        win = read_win(joinpath(gd, "gaas.win"))
+        res = run_wannier(GAAS_MODEL, win)
+        tmp = mktempdir()
+        paths = plot_wannier_functions(GAAS_MODEL, win, res;
+                                       seedname = joinpath(tmp, "gaas"), dir = gd)
+        @test length(paths) == 4
+        @test all(isfile, paths)
+        txt = read(paths[1], String)
+        @test occursin("PRIMVEC", txt) && occursin("BEGIN_DATAGRID_3D", txt)
+        # the WF grid is normalised like the UNK inputs; peak amplitude is O(1)
+        w, ng, los = WannierFunctions.wannier_function_grid(GAAS_MODEL, win, res; list = [1], dir = gd)
+        @test ng == (20, 20, 20)
+        @test 0.5 < maximum(abs.(w)) < 20
+        # phase fixing: the max-|w| point is real positive
+        v = w[:, :, :, 1][argmax(abs2.(w[:, :, :, 1]))]
+        @test abs(imag(v)) < 1e-10 && real(v) > 0
+    else
+        @test_skip false
+    end
+end

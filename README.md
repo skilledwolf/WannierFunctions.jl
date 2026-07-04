@@ -142,10 +142,22 @@ interface (pw2wannier90 etc.) — byte-identical to `wannier90.x -pp` output. Th
 `silicon_band.dat/.kpt/.labelinfo.dat` (`bands_plot`) — the same outputs, in the same formats, as
 `wannier90.x silicon`.
 
+**Γ-only calculations are supported** (silane, benzene validated): the half-stored b-vector set
+is expanded to the closed full set on load using M(−b) = M(b)†, so the general machinery is exact.
+One documented difference: we minimise over the full unitary group, while the reference Γ code
+restricts to real orthogonal gauges — our converged spread can come out marginally *lower*
+(benzene: 12.9583353 vs the reference's stationary 12.9583380; Ω_I identical to 3e-12).
+
+**Spinor projections** (`spinors = .true.`): `-pp` writes the `spinor_projections` block —
+byte-identical to `wannier90.x -pp` on the Pt (SOC) test input.
+
+**Wannier-function plotting** (`wannier_plot = .true.`): reads formatted UNK files and writes
+XCrySDen `.xsf` volumetric grids — all four GaAs Wannier functions match the reference output to
+the file's e13.5 precision, including the global phase convention.
+
 ## Roadmap
 
-- Γ-only (real-gauge) minimiser path (a distinct algorithm from the general complex minimiser).
-- `guiding_centres` branch selection; spinor projections; Wannier-function plotting (UNK → cube/xsf).
+- `guiding_centres` branch selection; Γ-only real-orthogonal parity mode; `.cube` plot output.
 - `.chk.fmt` (formatted transport variant of the checkpoint; the binary `.chk` is supported).
 - Berry-phase observables on top of `TBOperator` (the position operator is already in place).
 - Projectability-based (`dis_froz_proj`) and symmetry-adapted (SAWF) variants; `postw90.x`

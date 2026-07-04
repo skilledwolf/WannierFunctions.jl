@@ -182,7 +182,10 @@ end
 # Projections: parse the .win `projections` block into per-orbital entries.
 # ---------------------------------------------------------------------------
 
-"One projection: site (fractional), angular character (l, mr), radial node count, axes."
+"""
+One projection: site (fractional), angular character (l, mr), radial node count, axes; for
+spinor projections `s = ±1` selects the spin component along `s_qaxis` (`s = 0` ⇒ spatial).
+"""
 struct Projection
     site::SVector{3,Float64}
     l::Int
@@ -191,7 +194,11 @@ struct Projection
     z::SVector{3,Float64}
     x::SVector{3,Float64}
     zona::Float64
+    s::Int
+    s_qaxis::SVector{3,Float64}
 end
+Projection(site, l, mr, radial, z, x, zona) =
+    Projection(site, l, mr, radial, z, x, zona, 0, SVector(0.0, 0.0, 1.0))
 
 # orbital label → (l, [mr...]); bare "p"/"d"/"f" expand to all mr. Wannier90 user-guide table 3.1.
 const ORBITALS = Dict{String,Tuple{Int,Vector{Int}}}(
@@ -238,7 +245,7 @@ Parse the `projections` block: `Species:orb[;orb2...]`, `f=x,y,z:orb`, or `c=x,y
 (a species expands to every atom of that species, in atoms-block order). Default z-axis (0,0,1),
 x-axis (1,0,0), zona 1.0, radial 1 — the reference defaults.
 """
-function parse_projections(win::WinInput)
+function parse_projections(win::WinInput; spinors::Bool=_getbool(win.raw, "spinors", false))
     haskey(win.blocks, "projections") || return Projection[]
     atoms = parse_atoms(win)
     projs = Projection[]
@@ -265,13 +272,24 @@ function parse_projections(win::WinInput)
             isempty(sites) && error("projections: no atoms of species `$sitespec` " *
                                     "(have: $(unique(first.(atoms))))")
         end
-        # resolve orbitals (may be ';'-separated)
+        # resolve orbitals (';'-separated). The reference emits a line's orbitals in
+        # ascending-l order regardless of spec order ("Pt: d;s;p" → s, p, d).
+        orbs = Tuple{Int,Vector{Int}}[]
         for orb in split(orbspec, ';')
             key = lowercase(strip(orb))
             haskey(ORBITALS, key) || error("projections: unknown orbital `$orb` " *
                                            "(supported: $(join(sort(collect(keys(ORBITALS))), ", ")))")
-            l, mrs = ORBITALS[key]
-            for site in sites, mr in mrs
+            push!(orbs, ORBITALS[key])
+        end
+        sort!(orbs; by=first)
+        for site in sites, (l, mrs) in orbs, mr in mrs
+            if spinors
+                for spin in (1, -1)     # up/down interleaved, as the reference writes them
+                    push!(projs, Projection(site, l, mr, 1, SVector(0.0, 0.0, 1.0),
+                                            SVector(1.0, 0.0, 0.0), 1.0, spin,
+                                            SVector(0.0, 0.0, 1.0)))
+                end
+            else
                 push!(projs, Projection(site, l, mr, 1,
                                         SVector(0.0, 0.0, 1.0), SVector(1.0, 0.0, 0.0), 1.0))
             end
@@ -315,15 +333,19 @@ function write_nnkp(path::AbstractString, lattice::Lattice, kfrac::Vector{SVecto
             println(io, _f(k[1], 14, 8), _f(k[2], 14, 8), _f(k[3], 14, 8))
         end
         println(io, "end kpoints\n")
-        println(io, "begin projections")
+        spinor = !isempty(projs) && projs[1].s != 0
+        blockname = spinor ? "spinor_projections" : "projections"
+        println(io, "begin ", blockname)
         println(io, lpad(length(projs), 6))
         for p in projs
             println(io, _f(p.site[1], 10, 5), " ", _f(p.site[2], 10, 5), " ", _f(p.site[3], 10, 5),
                     "   ", lpad(p.l, 3), lpad(p.mr, 3), lpad(p.radial, 3))
             println(io, "  ", _f(p.z[1], 11, 7), _f(p.z[2], 11, 7), _f(p.z[3], 11, 7), " ",
                     _f(p.x[1], 11, 7), _f(p.x[2], 11, 7), _f(p.x[3], 11, 7), " ", _f(p.zona, 7, 2))
+            spinor && println(io, "  ", lpad(p.s, 3), " ", _f(p.s_qaxis[1], 11, 7),
+                              _f(p.s_qaxis[2], 11, 7), _f(p.s_qaxis[3], 11, 7))
         end
-        println(io, "end projections\n")
+        println(io, "end ", blockname, "\n")
         println(io, "begin nnkpts")
         println(io, lpad(nntot, 4))
         for k in 1:nk, nn in 1:nntot
@@ -378,6 +400,21 @@ function generate_nnkp(seedname::AbstractString; out::AbstractString=seedname * 
     shell_list, weights = select_shells(kcart, lattice, cells, dnn, multi; kmesh_tol=win.kmesh_tol)
     nnlist, nncell, nntot = build_nnlist(win.kpoints, lattice, cells, dnn, shell_list, multi;
                                          tol=win.kmesh_tol)
+    if win.gamma_only
+        # Keep the first of each ±b pair, in discovery order (kmesh.F90:833-861); the DFT
+        # interface then computes overlaps for half the b-vectors only.
+        length(win.kpoints) == 1 || error("gamma_only requires a single k-point")
+        bcart(nn) = lattice.B * (win.kpoints[nnlist[1, nn]] +
+                                 SVector{3,Float64}(nncell[:, 1, nn]...) - win.kpoints[1])
+        keep = Int[]
+        for nn in 1:nntot
+            any(k -> norm(bcart(k) + bcart(nn)) < 1e-8, keep) || push!(keep, nn)
+        end
+        length(keep) == nntot ÷ 2 || error("gamma_only: could not pair b-vectors")
+        nnlist = nnlist[:, keep]
+        nncell = nncell[:, :, keep]
+        nntot = length(keep)
+    end
     projs = parse_projections(win)
     excl = parse_exclude_bands(win)
     write_nnkp(out, lattice, win.kpoints, projs, nnlist, nncell; exclude_bands=excl)

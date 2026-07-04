@@ -178,9 +178,17 @@ function Checkpoint(model::Model, win::WinInput, result::WannierResult)
         end
         ωI = dis.omega_I
     end
+    # Γ-only: the model was expanded to the closed b-set on load; the checkpoint (like the
+    # .mmn/.nnkp) stores only the file half, which is the first nntot/2 slots by construction.
+    nntot = model.bvectors.nntot
+    Mout = result.Mrot
+    if win.gamma_only
+        nntot = nntot ÷ 2
+        Mout = Mout[:, :, 1:nntot, :]
+    end
     return Checkpoint("written by WannierFunctions.jl", Int[],
                       Matrix(model.lattice.A), Matrix(model.lattice.B), kl,
-                      model.kgrid.mp_grid, model.bvectors.nntot, "postwann",
+                      model.kgrid.mp_grid, nntot, "postwann",
                       result.disentangled, ωI, lwindow, ndimwin, uopt,
-                      result.U, result.Mrot, result.spread.centres, result.spread.spreads)
+                      result.U, Mout, result.spread.centres, result.spread.spreads)
 end

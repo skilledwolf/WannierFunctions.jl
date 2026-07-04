@@ -19,7 +19,8 @@ const SUPPORTED_KEYWORDS = Set{String}([
     "use_ws_distance", "dis_win_min", "dis_win_max", "dis_froz_min", "dis_froz_max",
     "dis_num_iter", "dis_mix_ratio", "conv_tol", "conv_window", "trial_step", "num_cg_steps",
     "bands_plot", "bands_num_points", "write_hr", "hr_plot", "write_tb", "guiding_centres",
-    "postproc_setup", "exclude_bands",
+    "postproc_setup", "exclude_bands", "gamma_only", "spinors",
+    "wannier_plot", "wannier_plot_list", "wannier_plot_supercell", "wannier_plot_format",
 ])
 const IGNORED_KEYWORDS = Set{String}([
     "wvfn_formatted", "num_print_cycles", "iprint", "timing_level",
@@ -108,6 +109,7 @@ struct WinInput
     dis_froz_max::Float64
     dis_num_iter::Int
     dis_mix_ratio::Float64
+    gamma_only::Bool
     raw::Dict{String,String}
     blocks::Dict{String,Vector{String}}
 end
@@ -239,6 +241,7 @@ function read_win(path::AbstractString; strict::Bool=true)
         _getfloat(raw, "dis_froz_max", -Inf),
         _getint(raw, "dis_num_iter", 200),
         _getfloat(raw, "dis_mix_ratio", 0.5),
+        _getbool(raw, "gamma_only", false),
         raw, blocks,
     )
 end

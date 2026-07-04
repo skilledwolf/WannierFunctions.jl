@@ -44,6 +44,15 @@ function main(seedname::AbstractString; pp::Bool=false, write_files::Bool=true, 
     # (or a later restart) consume our result at full precision.
     write_chk(seedname * ".chk", Checkpoint(model, win, result))
 
+    if _winflag(win, "wannier_plot", false)
+        try
+            paths = plot_wannier_functions(model, win, result; seedname=seedname)
+            verbose && @info "wannier_plot: wrote $(length(paths)) .xsf file(s)"
+        catch err
+            @warn "wannier_plot failed" error = sprint(showerror, err)
+        end
+    end
+
     # Real-space Hamiltonian outputs and band interpolation need per-k energies.
     need_hr = _winflag(win, "write_hr", false) || _winflag(win, "hr_plot", false)
     need_tb = _winflag(win, "write_tb", false)

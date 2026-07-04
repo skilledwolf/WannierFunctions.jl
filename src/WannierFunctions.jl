@@ -28,6 +28,7 @@ include("operator.jl")
 include("output.jl")
 include("nnkp.jl")
 include("chk.jl")
+include("plot.jl")
 include("wout.jl")
 include("cli.jl")
 include("show.jl")
@@ -44,6 +45,7 @@ export write_hr, read_hr, write_tb, write_band_dat, write_band_kpt, write_labeli
 export write_wout, generate_kpath, main
 export generate_nnkp, write_nnkp, parse_projections, parse_exclude_bands, Projection
 export Checkpoint, read_chk, write_chk
+export read_unk, plot_wannier_functions, write_xsf, parse_range_list
 export TBOperator, hamiltonian_operator, position_operator, bands, fourier_to_R
 
 """
@@ -61,6 +63,25 @@ function read_model(seedname::AbstractString)
     nk_a == nk_m || error("num_kpts mismatch between .amn ($nk_a) and .mmn ($nk_m)")
     nw_a == win.num_wann || error("num_wann mismatch between .amn ($nw_a) and .win ($(win.num_wann))")
     nk_a == length(win.kpoints) || error("num_kpts mismatch between .amn ($nk_a) and .win kpoints ($(length(win.kpoints)))")
+
+    # Γ-only inputs store only half the b-vectors (the −b partners are implied by
+    # M(−b) = M(b)†, exactly — at Γ, u at the k+b image is e^{−ib·r}u). Expand to the closed
+    # full set so the spread AND its gradient are exact with the general machinery; the B1
+    # solve then recovers the standard full-set weights automatically. Output paths that must
+    # match the reference file convention (.chk, .nnkp) write the first (file) half back.
+    if win.gamma_only
+        nk_m == 1 || error("gamma_only requires a single k-point (got $nk_m)")
+        M2 = Array{ComplexF64,4}(undef, nb_m, nb_m, 2 * nntot, 1)
+        kpb2 = ones(Int, 2 * nntot, 1)
+        gpb2 = Array{Int,3}(undef, 3, 2 * nntot, 1)
+        for b in 1:nntot
+            M2[:, :, b, 1] = M[:, :, b, 1]
+            M2[:, :, nntot+b, 1] = (@view M[:, :, b, 1])'
+            gpb2[:, b, 1] = gpb[:, b, 1]
+            gpb2[:, nntot+b, 1] = .-gpb[:, b, 1]
+        end
+        M, kpb, gpb, nntot = M2, kpb2, gpb2, 2 * nntot
+    end
 
     lattice = Lattice(win.unit_cell)
     kgrid = KGrid(win.kpoints, win.mp_grid)

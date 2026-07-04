@@ -88,14 +88,19 @@ components, ~1e-5 Å on centres), for both the isolated-bands and the disentangl
 - **Two optimisers**: the CLI/.win path uses `:w90` (reference-exact); the Julia-native API
   defaults to `:rcg` (Riemannian CG with real convergence). Same minima, verified by tests.
 
+**Also supported (Phase 1):** the binary `.chk` checkpoint in both directions (write ours,
+`wannier90.x restart=plot` / `postw90.x` consume it), `gamma_only` inputs (half b-set expanded
+exactly), `spinors` in `-pp`, `exclude_bands`, and `wannier_plot` (formatted UNK → `.xsf`).
+
 **Not yet supported:**
 
-- **`.chk` / `.chk.fmt`** read/write for full-precision interchange with `wannier90.x`.
+- **`.chk.fmt`** (the formatted transport variant; binary `.chk` works).
 - **`guiding_centres`** branch selection for the `Im ln` sheet (default off; the CLI warns if you
   set it and falls back to the principal branch).
 - `_r.dat` and Berry-phase observables (the position operator itself is implemented; `_tb.dat`
   carries real r-blocks).
-- **Γ-only** real-gauge minimiser (a distinct algorithm in the reference); use the general path.
+- **Γ-only real-orthogonal parity**: Γ inputs run on the (exact) complex path and may converge
+  marginally below the reference's real-gauge value; a parity mode is on the roadmap.
 - Projectability (`dis_froz_proj`) / symmetry-adapted (SAWF) variants, and `postw90.x`
   post-processing (out of scope for the core).
 
