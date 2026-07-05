@@ -43,7 +43,14 @@ gauge-rotated overlaps `Mrot[n,n',b,k]` and the neighbour geometry `bv::BVectors
 end
 
 function compute_spread(Mrot::Array{ComplexF64,4}, bv::BVectors;
-                        guides::Union{Nothing,Matrix{Float64}}=nothing)
+                        guides::Union{Nothing,Matrix{Float64}}=nothing,
+                        slwf=nothing)
+    # SLWF+C: the localiser's objective is Ω_C (spread of the selected WFs + constraint), not
+    # the total Ω. Return it in the .Ω field so the line search / convergence use it directly.
+    if slwf !== nothing
+        res = slwf_omega(Mrot, bv, slwf)
+        return SpreadResult(res.centres, zeros(size(Mrot, 1)), res.ΩC, 0.0, 0.0, 0.0)
+    end
     nw = size(Mrot, 1)
     nntot = size(Mrot, 3)
     nk = size(Mrot, 4)

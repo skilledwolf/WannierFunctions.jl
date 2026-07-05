@@ -194,7 +194,8 @@ function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
                   conv_tol::Float64=CONV_TOL_DEFAULT, conv_window::Int=-1,
                   verbose::Bool=false,
                   guides::Union{Nothing,Matrix{Float64}}=nothing,
-                  precond::Union{Nothing,NamedTuple}=nothing)
+                  precond::Union{Nothing,NamedTuple}=nothing, slwf=nothing)
+    slwf === nothing || error("SLWF+C requires algorithm = :rcg (the Ω_C objective path)")
     kpb = bv.kpb
     nw = size(U0, 1)
     nk = size(U0, 3)
@@ -301,7 +302,8 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
                        conv_tol::Float64=CONV_TOL_DEFAULT, conv_window::Int=3,
                        verbose::Bool=false, num_cg_steps::Int=0,
                        guides::Union{Nothing,Matrix{Float64}}=nothing,
-                       precond::Union{Nothing,NamedTuple}=nothing)   # num_cg_steps/guides/precond: :w90-only
+                       precond::Union{Nothing,NamedTuple}=nothing,
+                       slwf=nothing)   # num_cg_steps/guides/precond: :w90-only; slwf::SLWF
     (guides === nothing && precond === nothing) ||
         error("guiding_centres / precond require algorithm = :w90 (the reference path)")
     kpb = bv.kpb
@@ -310,7 +312,7 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
 
     U = copy(U0)
     Mrot = copy(Mrot0)
-    sr = compute_spread(Mrot, bv)
+    sr = compute_spread(Mrot, bv; slwf=slwf)
     omega_trace = Float64[sr.Ω]
 
     inner(A, B) = real(dot(A, B))            # Re Σ_k tr(A_k† B_k)
@@ -323,7 +325,7 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
     iter = 0
     while iter < num_iter
         iter += 1
-        G = omega_gradient(Mrot, bv, sr.centres)
+        G = slwf === nothing ? omega_gradient(Mrot, bv, sr.centres) : slwf_gradient(Mrot, bv, slwf)
         gnorm2 = inner(G, G)
         if gnorm2 < 1e-24                     # stationary point
             converged = true
@@ -352,7 +354,7 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
             R = expm_all(d .* (s / fourw))
             Ut = copy(U); Mt = copy(Mrot)
             apply_rotation!(Ut, Mt, kpb, R)
-            srt = compute_spread(Mt, bv)
+            srt = compute_spread(Mt, bv; slwf=slwf)
             if srt.Ω <= sr.Ω + 1.0e-4 * s * slope    # Armijo sufficient decrease
                 # one parabolic refinement through (0, sr.Ω), slope, (s, srt.Ω)
                 denom = srt.Ω - sr.Ω - slope * s
@@ -362,7 +364,7 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
                         Ro = expm_all(d .* (s_opt / fourw))
                         Uo = copy(U); Mo = copy(Mrot)
                         apply_rotation!(Uo, Mo, kpb, Ro)
-                        sro = compute_spread(Mo, bv)
+                        sro = compute_spread(Mo, bv; slwf=slwf)
                         if sro.Ω < srt.Ω
                             Ut, Mt, srt, s = Uo, Mo, sro, s_opt
                         end

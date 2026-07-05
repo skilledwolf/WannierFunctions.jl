@@ -1284,3 +1284,17 @@ end
         @test_skip false
     end
 end
+
+@testset "SLWF+C selective localisation" begin
+    # example26: GaAs, slwf_num=1, constrain WF1 to (0.25,0.25,0.25); objective Ω_C=1.634087565
+    ed = joinpath(REFROOT, "testw90_example26")
+    if isfile(joinpath(ed, "gaas.win")) && isfile(joinpath(ed, "gaas.amn"))
+        m = read_model(joinpath(ed, "gaas")); w = read_win(joinpath(ed, "gaas.win"))
+        # objective on the reference gauge (if a chk is present), else via the optimiser
+        r = run_wannier(m, w)
+        @test r.spread.Ω ≈ 1.634087565 atol = 1e-6     # Ω_C (compute_spread returns it for SLWF)
+        @test r.converged
+    else
+        @test_skip false
+    end
+end

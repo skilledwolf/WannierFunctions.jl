@@ -68,18 +68,45 @@ function run_wannier(model::Model, win::WinInput; verbose::Bool=false)
         Rcart = [model.lattice.A * SVector{3,Float64}(r...) for r in irvec]
         lopts[:precond] = (kfrac=model.kgrid.frac, irvec=irvec, ndegen=ndegen, Rcart=Rcart)
     end
+    # SLWF+C selective localisation (isolated case): route through the :rcg path which carries
+    # the Ω_C objective + gradient. Active when slwf_num < num_wann.
+    slwf = _slwf_from_win(win, model)
+    if slwf !== nothing
+        algo, ni = :rcg, max(win.num_iter, 2000)
+    else
+        algo, ni = :w90, win.num_iter
+    end
     if model.num_bands > model.num_wann
         # win-aware disentanglement (honours dis_spheres / dis_froz_proj / dis_proj_* / windows)
         dis = disentangle(model, win; verbose=verbose)
         res = localize(dis.U0, dis.Mrot0, model.bvectors;
-                       num_iter=win.num_iter, algorithm=:w90, verbose=verbose, lopts...)
+                       num_iter=ni, algorithm=algo, verbose=verbose, slwf=slwf, lopts...)
         return WannierResult(res.U, res.Mrot, dis.eigval_opt, res.spread, true, dis.omega_I,
                              res.niter, res.converged, dis)
     else
-        res = wannierise(model; num_iter=win.num_iter, algorithm=:w90, verbose=verbose, lopts...)
+        res = wannierise(model; num_iter=ni, algorithm=algo, verbose=verbose, slwf=slwf, lopts...)
         return WannierResult(res.U, res.Mrot, model.eig, res.spread, false, res.spread.ΩI,
                              res.niter, res.converged, nothing)
     end
+end
+
+"Build an `SLWF` from the .win keywords (slwf_num/slwf_constrain/slwf_lambda/slwf_centres), or nothing."
+function _slwf_from_win(win::WinInput, model::Model)
+    num = _getint(win.raw, "slwf_num", model.num_wann)
+    num >= model.num_wann && return nothing        # slwf_num == num_wann → selective_loc off
+    constrain = _getbool(win.raw, "slwf_constrain", false)
+    lambda = _getfloat(win.raw, "slwf_lambda", 1.0)
+    centres = zeros(3, num)
+    if constrain && haskey(win.blocks, "slwf_centres")
+        for ln in win.blocks["slwf_centres"]
+            t = split(ln)
+            length(t) >= 4 || continue
+            iw = parse(Int, t[1])
+            1 <= iw <= num || continue
+            centres[:, iw] = model.lattice.A * SVector{3,Float64}(parse_f64.(t[2:4])...)
+        end
+    end
+    return SLWF(num, lambda, constrain, centres)
 end
 
 """
