@@ -1124,3 +1124,111 @@ end
         @test_skip false
     end
 end
+
+@testset "TB input + disentangle/wannierise options + FermiSurfer" begin
+    # dis_spheres: LaVO3 (Ω_total 7.508128029, Ω_I 7.457463597) — plain inputs, no bz2
+    dd = joinpath(REFROOT, "testw90_lavo3_dissphere")
+    if isfile(joinpath(dd, "LaVO3.win"))
+        m = read_model(joinpath(dd, "LaVO3")); w = read_win(joinpath(dd, "LaVO3.win"))
+        r = run_wannier(m, w)
+        @test r.spread.Ω ≈ 7.508128029 atol = 1e-5
+        @test r.omega_I ≈ 7.457463597 atol = 1e-5
+    else
+        @test_skip false
+    end
+
+    # PDWF (dis_froz_proj + dis_proj_min/max): graphene (Ω_total 15.803349910)
+    pd = joinpath(REFROOT, "testw90_graphene_pdwf")
+    if isfile(joinpath(pd, "graphene.win"))
+        m = read_model(joinpath(pd, "graphene")); w = read_win(joinpath(pd, "graphene.win"))
+        r = run_wannier(m, w)
+        @test r.spread.Ω ≈ 15.803349910 atol = 1e-5
+        @test r.omega_I ≈ 7.962090079 atol = 1e-5
+    else
+        @test_skip false
+    end
+
+    # guiding_centres + select_projections: silicon (22.738496505 Bohr² = Ω/bohr²)
+    gs = joinpath(REFROOT, "testw90_guidingcentre_selectproj")
+    if isfile(joinpath(gs, "silicon.win"))
+        m = read_model(joinpath(gs, "silicon")); w = read_win(joinpath(gs, "silicon.win"))
+        r = run_wannier(m, w)
+        bohr = 0.52917720859
+        @test r.spread.Ω / bohr^2 ≈ 22.738496505 atol = 1e-4
+        @test all(s -> isapprox(s / bohr^2, 5.68462413; atol = 1e-4), r.spread.spreads)
+    else
+        @test_skip false
+    end
+
+    # preconditioned CG: GaAs reaches the same minimum (4.466880976)
+    pc = joinpath(REFROOT, "testw90_precond_1")
+    if isfile(joinpath(pc, "gaas1.win"))
+        m = read_model(joinpath(pc, "gaas1")); w = read_win(joinpath(pc, "gaas1.win"))
+        r = run_wannier(m, w)
+        @test r.spread.Ω ≈ 4.466880976 atol = 1e-6
+    else
+        @test_skip false
+    end
+
+    # TB-model input round-trip: build a BerryModel, write/read a _tb.dat, reproduce it
+    fe = joinpath(REFROOT, "testpostw90_fe_ahc")
+    if isfile(joinpath(fe, "Fe.chk.fmt.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = mktempdir()
+        for f in ("Fe.win", "Fe.eig")
+            cp(joinpath(fe, f), joinpath(tmp, f); follow_symlinks = true)
+        end
+        for f in ("Fe.chk.fmt", "Fe.mmn")
+            run(pipeline(`bunzip2 -kc $(joinpath(fe, f * ".bz2"))`, stdout = joinpath(tmp, f)))
+        end
+        bm = BerryModel(joinpath(tmp, "Fe"))
+        pos = reshape(bm.Ar, size(bm.Ar, 1), size(bm.Ar, 2), size(bm.Ar, 3), 3)
+        tbf = joinpath(tmp, "RT_tb.dat")
+        write_tb(tbf, bm.lattice, size(bm.Hr, 1), bm.irvec, bm.ndegen, bm.Hr; pos = pos)
+        tb = tb_model(tbf)
+        @test tb.irvec == bm.irvec
+        # bands identical to the source model
+        k = SVector(0.1, 0.2, 0.3)
+        E1, _ = eig_deleig(bm, k; deriv = false)
+        E2, _ = eig_deleig(tb, k; deriv = false)
+        @test maximum(abs.(E1 .- E2)) < 1e-5
+        # AHC reproduced from the TB model alone
+        a1 = anomalous_hall(bm; fermi_energy = 12.6279, kmesh = (8, 8, 8))
+        a2 = anomalous_hall(tb; fermi_energy = 12.6279, kmesh = (8, 8, 8))
+        @test a2[3] ≈ a1[3] rtol = 1e-4
+
+        # FermiSurfer .frmsf: layout + energies match interpolation
+        E, _ = tabulate_3d(tb; mesh = (4, 4, 4))
+        @test size(E) == (size(bm.Hr, 1), 4, 4, 4)
+        ffile = joinpath(tmp, "t.frmsf")
+        write_frmsf(ffile, tb.lattice, E; fermi_energy = 12.0)
+        lines = readlines(ffile)
+        @test length(lines) == 6 + size(E, 1) * 64      # header(6) + nband*4^3 energies
+        Ek, _ = eig_deleig(tb, [0.0, 0.0, 0.0]; deriv = false)
+        @test E[1, 1, 1, 1] ≈ Ek[1] atol = 1e-8
+    else
+        @test_skip false
+    end
+end
+
+@testset "tetrahedron SHC" begin
+    # Pt tetrahedron Fermi scan (Ghim-Park + Kawamura), qiao operators — 10^3 mesh (~7s)
+    td = joinpath(REFROOT, "testpostw90_pt_tetra_shcfermi")
+    if isfile(joinpath(td, "Pt.spn.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = mktempdir()
+        for f in ("Pt.win", "Pt.eig")
+            cp(joinpath(td, f), joinpath(tmp, f); follow_symlinks = true)
+        end
+        for f in ("Pt.chk.fmt", "Pt.mmn", "Pt.spn")
+            run(pipeline(`bunzip2 -kc $(joinpath(td, f * ".bz2"))`, stdout = joinpath(tmp, f)))
+        end
+        sm = ShcModel(joinpath(tmp, "Pt"))
+        efs = collect(13.0:0.5:23.0)
+        shc = shc_tetra(sm; kmesh = (10, 10, 10), fermi_energies = efs, γ = 3, α = 1, β = 2,
+                        cutoff = 1e-1, avoid_deg = 3e-4)
+        @test shc[1] ≈ -1047.7881 atol = 0.1        # oracle fermiscan rows 1, 11, 21
+        @test shc[11] ≈ 1863.5104 atol = 0.1
+        @test shc[21] ≈ 522.79635 atol = 0.1
+    else
+        @test_skip false
+    end
+end

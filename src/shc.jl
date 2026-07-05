@@ -455,6 +455,25 @@ function _shc_k_band(sm::Union{ShcModel,ShcRyooModel}, kf::SVector{3,Float64}, �
 end
 
 """
+    shc_imjv(sm, kf; γ=3, α=1, β=2) -> (E, imjv)
+
+Band energies and the raw SHC integrand matrix `imjv[n,m] = Im[j^{spin γ}_{α,nm}·v_{β,mn}]`
+(no energy denominator, no smearing) at one k — the quantity the tetrahedron method integrates.
+Equals the per-pair numerator of the Gaussian [`shc_fermiscan`](@ref).
+"""
+function shc_imjv(sm::Union{ShcModel,ShcRyooModel}, kf::SVector{3,Float64};
+                  γ::Int=3, α::Int=1, β::Int=2)
+    E, dE, AAβ, js = _shc_k_setup(sm, kf, γ, α, β)
+    nw = length(E)
+    imjv = zeros(nw, nw)
+    for m in 1:nw, n in 1:nw
+        n == m && continue
+        imjv[n, m] = imag(js[n, m] * im * (E[m] - E[n]) * AAβ[m, n])
+    end
+    return E, imjv
+end
+
+"""
     shc_freqscan(sm; freqs, fermi_energy, kmesh, γ=3, α=1, β=2, adaptive=true,
                  adpt_fac=√2, adpt_max=1.0, smr_width=0.0, eigval_max=Inf)
         -> Vector{ComplexF64} (per frequency, (ħ/e)·S/cm)

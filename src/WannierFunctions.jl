@@ -36,6 +36,8 @@ include("spin.jl")
 include("dos.jl")
 include("boltzwann.jl")
 include("shc.jl")
+include("tetrahedron_kernels.jl")
+include("tetrahedron.jl")
 include("morb.jl")
 include("gyrotropic.jl")
 include("kslice.jl")
@@ -78,6 +80,7 @@ export tabulate_3d, write_frmsf
 export read_tb, tb_model
 export boltzwann, BoltzWannResult
 export ShcModel, ShcRyooModel, shc_fermiscan, shc_freqscan, read_spn, read_shu, write_shc
+export shc_tetra, shc_imjv
 export kslice, write_kslice
 export MorbModel, orbital_magnetisation, read_uhu
 export TBOperator, hamiltonian_operator, position_operator, bands, fourier_to_R
