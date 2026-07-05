@@ -161,10 +161,15 @@ num_bands == num_wann). `algorithm = :rcg` (default) uses Riemannian conjugate g
 true convergence criterion (`num_iter` is a maximum); `algorithm = :w90` reproduces the reference
 Wannier90 optimiser exactly (fixed `num_iter` sweeps unless `conv_window > 1`).
 """
-function wannierise(model::Model; num_iter::Int=model_num_iter(model), kwargs...)
+function wannierise(model::Model; num_iter::Int=model_num_iter(model), sitesym=nothing, kwargs...)
     U0 = initial_gauge(model.A)
+    # site_symmetry: symmetrise the initial gauge so the whole trajectory stays symmetry-adapted.
+    # The reconstruction U(Rk) = d_band·U(k)·d_wann† uses the band representation on the left
+    # (for the isolated case d_band is the original .dmn band-rep; the rotation/gradient use
+    # d_wann on both sides, keeping the relation invariant under U ← U·R).
+    sitesym === nothing || symmetrize_u!(U0, sitesym, sitesym.d_band, sitesym.d_wann)
     Mrot0 = rotate_overlaps(model.M, U0, model.bvectors.kpb)
-    return localize(U0, Mrot0, model.bvectors; num_iter=num_iter, kwargs...)
+    return localize(U0, Mrot0, model.bvectors; num_iter=num_iter, sitesym=sitesym, kwargs...)
 end
 
 """
@@ -194,8 +199,9 @@ function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
                   conv_tol::Float64=CONV_TOL_DEFAULT, conv_window::Int=-1,
                   verbose::Bool=false,
                   guides::Union{Nothing,Matrix{Float64}}=nothing,
-                  precond::Union{Nothing,NamedTuple}=nothing, slwf=nothing)
+                  precond::Union{Nothing,NamedTuple}=nothing, slwf=nothing, sitesym=nothing)
     slwf === nothing || error("SLWF+C requires algorithm = :rcg (the Ω_C objective path)")
+    sitesym === nothing || error("site_symmetry requires algorithm = :rcg")
     kpb = bv.kpb
     nw = size(U0, 1)
     nk = size(U0, 3)
@@ -303,7 +309,7 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
                        verbose::Bool=false, num_cg_steps::Int=0,
                        guides::Union{Nothing,Matrix{Float64}}=nothing,
                        precond::Union{Nothing,NamedTuple}=nothing,
-                       slwf=nothing)   # num_cg_steps/guides/precond: :w90-only; slwf::SLWF
+                       slwf=nothing, sitesym=nothing)   # num_cg_steps/guides/precond: :w90-only
     (guides === nothing && precond === nothing) ||
         error("guiding_centres / precond require algorithm = :w90 (the reference path)")
     kpb = bv.kpb
@@ -326,6 +332,7 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
     while iter < num_iter
         iter += 1
         G = slwf === nothing ? omega_gradient(Mrot, bv, sr.centres) : slwf_gradient(Mrot, bv, slwf)
+        sitesym === nothing || symmetrize_gradient!(G, sitesym)   # project onto symmetric tangent
         gnorm2 = inner(G, G)
         if gnorm2 < 1e-24                     # stationary point
             converged = true
@@ -343,6 +350,9 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
             inner(G, d) <= 0 && (d = copy(G))
         end
         G_prev = G
+        # site_symmetry: propagate the (representative-k) rotation to the star so U stays
+        # symmetry-adapted after the step.
+        sitesym === nothing || symmetrize_rotation!(d, sitesym)
 
         slope = -inner(G, d) / fourw          # dΩ/ds at s=0 (negative)
 

@@ -1298,3 +1298,26 @@ end
         @test_skip false
     end
 end
+
+@testset "symmetry-adapted WFs (site_symmetry, localisation)" begin
+    # GaAs example21: isolated, site_symmetry; symmetric Ω=10.136492662, U symmetry-adapted
+    gd = joinpath(REFROOT, "testw90_example21_As_sp")
+    if isfile(joinpath(gd, "GaAs.dmn")) && isfile(joinpath(gd, "GaAs.amn"))
+        m = read_model(joinpath(gd, "GaAs"))
+        ss = read_dmn(joinpath(gd, "GaAs.dmn"), m.num_bands, m.num_wann)
+        @test ss.nsym == 24 && ss.nkptirr == 10
+        res = wannierise(m; num_iter = 2000, algorithm = :rcg, sitesym = ss)
+        @test res.spread.Ω ≈ 10.136492662 atol = 1e-5
+        @test res.converged
+        # U must be symmetry-adapted: U(Rk) = d_band·U(k)·d_wann†
+        dev = 0.0
+        for ir in 1:ss.nkptirr, is in 1:ss.nsym
+            ik = ss.ir2ik[ir]; irk = ss.kptsym[is, ir]
+            pred = ss.d_band[:, :, is, ir] * res.U[:, :, ik] * ss.d_wann[:, :, is, ir]'
+            dev = max(dev, maximum(abs.(res.U[:, :, irk] - pred)))
+        end
+        @test dev < 1e-6
+    else
+        @test_skip false
+    end
+end

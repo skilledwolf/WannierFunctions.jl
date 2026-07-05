@@ -53,9 +53,10 @@ function run_wannier(model::Model;
 end
 
 "Compat method: drive the pipeline from a parsed `.win` (reference-faithful `:w90` optimiser)."
-function run_wannier(model::Model, win::WinInput; verbose::Bool=false)
+function run_wannier(model::Model, win::WinInput; verbose::Bool=false, sitesym=nothing)
     # Optional :w90-path localisation controls from the .win.
     lopts = Dict{Symbol,Any}()
+    sitesym === nothing || (lopts[:sitesym] = sitesym)
     if _getbool(win.raw, "guiding_centres", false)
         # Branch-cut guides initialised from the projection centres (Cartesian Å), in WF order.
         projs = parse_projections(win)
@@ -71,11 +72,14 @@ function run_wannier(model::Model, win::WinInput; verbose::Bool=false)
     # SLWF+C selective localisation (isolated case): route through the :rcg path which carries
     # the Ω_C objective + gradient. Active when slwf_num < num_wann.
     slwf = _slwf_from_win(win, model)
-    if slwf !== nothing
-        algo, ni = :rcg, max(win.num_iter, 2000)
+    if slwf !== nothing || sitesym !== nothing
+        algo, ni = :rcg, max(win.num_iter, 2000)      # SLWF+C / site_symmetry use the :rcg path
     else
         algo, ni = :w90, win.num_iter
     end
+    sitesym === nothing || model.num_bands == model.num_wann ||
+        error("site_symmetry with disentanglement (num_bands > num_wann) is not yet supported; " *
+              "the localisation-phase symmetrisation is implemented for the isolated case")
     if model.num_bands > model.num_wann
         # win-aware disentanglement (honours dis_spheres / dis_froz_proj / dis_proj_* / windows)
         dis = disentangle(model, win; verbose=verbose)
@@ -117,7 +121,12 @@ Convenience: read `seedname.{win,amn,mmn,eig}` and run the full pipeline.
 function run_wannier(seedname::AbstractString; verbose::Bool=false)
     model = read_model(seedname)
     win = read_win(seedname * ".win")
-    return model, win, run_wannier(model, win; verbose=verbose)
+    # site_symmetry: load the .dmn (symmetry-adapted Wannier functions).
+    ss = nothing
+    if _getbool(win.raw, "site_symmetry", false) && isfile(seedname * ".dmn")
+        ss = read_dmn(seedname * ".dmn", model.num_bands, model.num_wann)
+    end
+    return model, win, run_wannier(model, win; verbose=verbose, sitesym=ss)
 end
 
 """

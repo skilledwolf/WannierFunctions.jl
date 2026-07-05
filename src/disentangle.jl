@@ -331,7 +331,8 @@ function disentangle(model::Model;
                      num_iter::Int=200, mix_ratio::Float64=0.5,
                      conv_tol::Float64=1e-10, conv_window::Int=3, verbose::Bool=false,
                      spheres::Union{Nothing,Vector{<:Tuple}}=nothing, sphere_first_wann::Int=1,
-                     froz_proj::Bool=false, proj_min::Float64=0.0, proj_max::Float64=1.0)
+                     froz_proj::Bool=false, proj_min::Float64=0.0, proj_max::Float64=1.0,
+                     sitesym=nothing)
     model.eig !== nothing || error("disentanglement requires band energies (.eig)")
     nw = model.num_wann
     bv = model.bvectors
@@ -359,6 +360,12 @@ function disentangle(model::Model;
                     recip=(spheres === nothing ? nothing : model.lattice.B),
                     sphere_first_wann=sphere_first_wann)
     end
+    # NOTE: the symmetry-adapted disentanglement (combined disentanglement + site_symmetry, e.g.
+    # the H3S test) needs the reference's `dis_extract_symmetry` constrained Ω_I minimiser, which
+    # is a distinct algorithm from this Z-matrix iteration; naively projecting the subspace onto
+    # the symmetric manifold each step over-constrains it. It is not implemented — the
+    # site_symmetry LOCALISATION phase (isolated case, e.g. GaAs) is, and is validated. The
+    # `sitesym` argument is accepted for future use but not applied here.
     eigwin, Awin, Mwin = slim_data(eig, model.A, model.M, kpb, wd)
     Uopt = dis_project(Awin, wd, nw)
 
@@ -457,6 +464,25 @@ function disentangle(model::Model;
     Mrot0 = rotate_overlaps(Mrot0, U0, kpb)
 
     return DisentangleResult(U0, Mrot0, eigval_opt, Uopt, omega_I, trace, niter)
+end
+
+"Symmetrise the disentanglement subspace embeddings (uniform window) using the band
+representation d_band and the Wannier representation d_wann of a `Sitesym`."
+function _symmetrize_uopt!(Uopt::Vector{Matrix{ComplexF64}}, sitesym, wd::WindowData)
+    nd = wd.ndimwin[1]
+    all(==(nd), wd.ndimwin) ||
+        error("site_symmetry disentanglement currently requires a uniform window")
+    nw = size(Uopt[1], 2)
+    nk = length(Uopt)
+    arr = Array{ComplexF64,3}(undef, nd, nw, nk)
+    for k in 1:nk
+        arr[:, :, k] = Uopt[k]
+    end
+    symmetrize_u!(arr, sitesym, sitesym.d_band, sitesym.d_wann; n=nd)
+    for k in 1:nk
+        Uopt[k] = arr[:, :, k]
+    end
+    return Uopt
 end
 
 "Compat method: pull the windows and iteration controls from a parsed `.win`."
