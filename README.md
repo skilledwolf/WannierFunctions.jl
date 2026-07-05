@@ -209,8 +209,30 @@ locally built `postw90.x` on the bcc-Fe reference case (spinor, 28 bands disenta
   is byte-identical (orders 1–2 match at 1e-6 in gauge-invariant magnitude).
 - **`wannier90.x` output extras**: Gaussian `.cube` WF plots (GaAs oracle numerically
   identical on every line), `_r.dat` position matrix elements (diamond oracle: integers exact,
-  floats at the F12.6 last digit), and `.bxsf` Fermi-surface grids (copper oracle at E16.8
-  precision).
+  floats at the F12.6 last digit), `.bxsf` Fermi-surface grids (copper oracle at E16.8
+  precision), `write_hr_diag`, and `write_xyz` + `translate_home_cell`.
+- **Tetrahedron-method SHC** (`shc_tetra`, Ghim–Park + Kawamura correction): the full analytic
+  per-tetrahedron integration (20-point optimized stencil, P-matrix, 5-case Fermi split,
+  type-1/2/3 energy-denominator integrals) replacing Gaussian smearing — Pt Fermi scan matches
+  the oracle to 4e-3 over 21 levels, frequency scan to 2e-3 (harness tolerance 0.1).
+
+Beyond the standard `postw90.x` run, the disentanglement and wannierisation front-end matches
+the reference's advanced options, each validated gauge-invariantly against its oracle:
+
+- **PDWF** (`dis_froz_proj`, `dis_proj_min/max`): projectability-based frozen-window selection
+  (Qiao–Pizzi–Marzari) — graphene Ω = 15.803350 to 3e-7.
+- **dis_spheres**: k-localised disentanglement — LaVO₃ Ω = 7.508128 to 2e-11.
+- **Guiding centres** + **select_projections**: branch-cut guides and `.amn` column selection —
+  silicon Ω = 22.7385 Bohr².
+- **Preconditioned CG** (`precond`): real-space Lorentzian gradient filter — GaAs reaches the
+  same 4.466880976 minimum.
+
+**Tight-binding model input** (`tb_model`, `read_tb`): interpolate the entire post-processing
+stack — bands, DOS, AHC, Berry curvature, FermiSurfer plots — directly from a `_hr.dat` or
+`_tb.dat` file with no `.chk`/`.mmn`/`.eig` (the WannierBerri `System_tb` workflow). H(R) and
+r(R) round-trip to file precision; Fe AHC reproduces from the TB model alone.
+**3-D tabulation + FermiSurfer** (`tabulate_3d`, `write_frmsf`): band/quantity grids in the
+`.frmsf` format for interactive Fermi-surface visualisation.
 
 The CLI honours `berry = true` / `berry_task = ahc` / `berry_kmesh` / `fermi_energy` from the
 `.win`.
@@ -225,10 +247,10 @@ against `w90chk2chk.x` conversions.
 
 ## Roadmap
 
-- Tetrahedron smearing for SHC; guiding centres, `dis_spheres`, PDWF, SLWF+C selective
-  localisation; Γ-only real-orthogonal parity mode; symmetry-adapted WFs.
-- Ecosystem: TB-model constructors from `hr.dat`/`tb.dat`, a DFTK.jl in-memory bridge,
-  irreducible-BZ sampling with tensor symmetrisation (WannierBerri-style), injection current.
+- SLWF+C selective localisation and symmetry-adapted WFs (`sitesym`/`.dmn`); Γ-only
+  real-orthogonal parity mode.
+- Ecosystem differentiators: a DFTK.jl in-memory bridge, irreducible-BZ sampling with tensor
+  symmetrisation (WannierBerri-style), injection current.
   See [`docs/reference-notes/parity-audit-2026.md`](docs/reference-notes/parity-audit-2026.md)
   for the full triage.
 

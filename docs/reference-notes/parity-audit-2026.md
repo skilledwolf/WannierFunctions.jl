@@ -1,5 +1,15 @@
 # Parity audit (July 2026): WannierFunctions.jl vs the field
 
+> **Status update (2026-07-04, after slate 2 + 3).** Everything in §1 (source-verified
+> wannier90/postw90 gaps) marked *do-now* or *do-later* with a shipped oracle test is now
+> **implemented and oracle-validated**, plus several *do-later* items: shift current, kdotp,
+> cube/`_r.dat`/`.bxsf`/`write_hr_diag`/`write_xyz`, PDWF, dis_spheres, guiding centres +
+> select_projections, preconditioned CG, TB-model input (+ 3-D tabulation/FermiSurfer), and
+> **tetrahedron-method SHC**. The remaining wannier90 gaps are SLWF+C, symmetry-adapted WFs
+> (`sitesym`/`.dmn`), the Stengel–Spaldin functional, and ballistic transport (skip). The
+> strategic ecosystem items (DFTK bridge, irreducible-BZ symmetrisation, injection current)
+> are unstarted by design. The triage below is the original survey, kept for reference.
+
 Triaged gap list against three sources, surveyed 2026-07-04:
 
 1. **wannier90 v4-dev** (reference Fortran at `/Users/wolft/Dev/wannier90_greenfield/reference/wannier90/`,
