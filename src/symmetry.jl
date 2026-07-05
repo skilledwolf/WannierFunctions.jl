@@ -131,6 +131,59 @@ function anomalous_hall_sym(bm::BerryModel, sym::SymmetryOps; fermi_energy::Floa
     return (fac / nktot) .* acc, (length(reps), nktot)
 end
 
+"""
+    orbital_magnetisation_sym(mm, sym; fermi_energy, kmesh=(25,25,25)) -> (M, ninfo)
+
+Orbital magnetisation over the irreducible wedge: the LVTS12 integrand is a pseudovector like
+the Berry curvature, so each irreducible representative contributes
+`w · (1/|G|) Σ_s det(R_s)·R_s·m(k)`. Equal to the full-BZ [`orbital_magnetisation`] but
+evaluates only the irreducible k-points. `ninfo = (n_irreducible, n_full)`.
+"""
+function orbital_magnetisation_sym(mm::MorbModel, sym::SymmetryOps; fermi_energy::Float64,
+                                   kmesh::NTuple{3,Int}=(25, 25, 25))
+    reps, wts, _ = irreducible_kmesh(kmesh, sym; kaction=:cart, lattice=mm.bm.lattice)
+    ng = nsym(sym)
+    nktot = prod(kmesh)
+    per = Vector{SVector{3,Float64}}(undef, length(reps))
+    Threads.@threads for i in 1:length(reps)
+        m = _morb_kdata(mm, reps[i], fermi_energy)
+        s = zeros(SVector{3,Float64})
+        for r in 1:ng
+            R = sym.rot[r]
+            s += det(R) .* (R * m)
+        end
+        per[i] = (wts[i] / ng) .* s
+    end
+    fac = -EV_AU / BOHR^2
+    return (fac / nktot) .* reduce(+, per), (length(reps), nktot)
+end
+
+"""
+    density_of_states_sym(bm, sym; energies, kmesh=(25,25,25), kwargs...) -> (es, dos, ninfo)
+
+DOS over the irreducible wedge: the integrand is a scalar, so the representatives only carry
+their star weights. Accepts the same smearing options as [`density_of_states`].
+"""
+function density_of_states_sym(bm::BerryModel, sym::SymmetryOps;
+                               energies::AbstractVector{<:Real},
+                               kmesh::NTuple{3,Int}=(25, 25, 25),
+                               adaptive::Bool=true, adpt_fac::Float64=sqrt(2.0),
+                               adpt_max::Float64=1.0, smr_width::Float64=0.0,
+                               elec_per_state::Int=2)
+    reps, wts, _ = irreducible_kmesh(kmesh, sym; kaction=:cart, lattice=bm.lattice)
+    es = collect(Float64, energies)
+    nktot = prod(kmesh)
+    Δk = kmesh_spacing(bm.lattice, kmesh)
+    per = Vector{Vector{Float64}}(undef, length(reps))
+    Threads.@threads for i in 1:length(reps)
+        out = zeros(length(es), 1)
+        _dos_kpoint!(out, bm, reps[i], es, Δk, adaptive, adpt_fac, adpt_max, smr_width,
+                     nothing, nothing, 0.0, 0.0, elec_per_state)
+        per[i] = wts[i] .* out[:, 1]
+    end
+    return es, reduce(+, per) ./ nktot, (length(reps), nktot)
+end
+
 "Fold a fractional k-point into [0,1)³ (numerical tolerance `tol`)."
 _wrapk(k::SVector{3,Float64}; tol::Float64=1e-7) =
     SVector(mod(k[1] + tol, 1.0) - tol, mod(k[2] + tol, 1.0) - tol, mod(k[3] + tol, 1.0) - tol)

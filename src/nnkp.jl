@@ -272,10 +272,11 @@ function parse_projections(win::WinInput; spinors::Bool=_getbool(win.raw, "spino
             isempty(sites) && error("projections: no atoms of species `$sitespec` " *
                                     "(have: $(unique(first.(atoms))))")
         end
-        # resolve orbitals (';'-separated). The reference emits a line's orbitals in
-        # ascending-l order regardless of spec order ("Pt: d;s;p" → s, p, d).
+        # resolve orbitals (';'- or ','-separated, as the reference accepts both:
+        # "O:s,p" ≡ "O:s;p"). The reference emits a line's orbitals in ascending-l order
+        # regardless of spec order ("Pt: d;s;p" → s, p, d).
         orbs = Tuple{Int,Vector{Int}}[]
-        for orb in split(orbspec, ';')
+        for orb in split(orbspec, [';', ','])
             key = lowercase(strip(orb))
             haskey(ORBITALS, key) || error("projections: unknown orbital `$orb` " *
                                            "(supported: $(join(sort(collect(keys(ORBITALS))), ", ")))")
@@ -400,6 +401,30 @@ function generate_nnkp(seedname::AbstractString; out::AbstractString=seedname * 
     shell_list, weights = select_shells(kcart, lattice, cells, dnn, multi; kmesh_tol=win.kmesh_tol)
     nnlist, nncell, nntot = build_nnlist(win.kpoints, lattice, cells, dnn, shell_list, multi;
                                          tol=win.kmesh_tol)
+    horder = _getint(win.raw, "higher_order_n", 1)
+    if horder > 1
+        # Higher-order finite differences (Lihm): append the 2b … Nb multiples of every
+        # first-order b, in the reference's canonical order [block1, 2·block1, …]. Each
+        # multiple is located by exact match of k + m·b folded into the mesh (kmesh.F90:491).
+        win.gamma_only && error("higher_order_n with gamma_only is not supported")
+        nk = length(win.kpoints)
+        nnlist2 = zeros(Int, nk, nntot * horder)
+        nncell2 = zeros(Int, 3, nk, nntot * horder)
+        nnlist2[:, 1:nntot] = nnlist
+        nncell2[:, :, 1:nntot] = nncell
+        for k in 1:nk, m in 2:horder, nn in 1:nntot
+            bfrac = m .* (win.kpoints[nnlist[k, nn]] +
+                          SVector{3,Float64}(nncell[:, k, nn]...) - win.kpoints[k])
+            lmn = floor.(Int, win.kpoints[k] + bfrac .+ 1e-6)
+            tgt = win.kpoints[k] + bfrac - lmn
+            k2 = findfirst(kf -> norm(kf - tgt) < win.kmesh_tol, win.kpoints)
+            k2 === nothing && error("generate_nnkp: could not find k+$(m)b neighbour on the mesh")
+            nnx = (m - 1) * nntot + nn
+            nnlist2[k, nnx] = k2
+            nncell2[:, k, nnx] .= lmn
+        end
+        nnlist, nncell, nntot = nnlist2, nncell2, nntot * horder
+    end
     if win.gamma_only
         # Keep the first of each ±b pair, in discovery order (kmesh.F90:833-861); the DFT
         # interface then computes overlaps for half the b-vectors only.

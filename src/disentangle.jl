@@ -332,7 +332,7 @@ function disentangle(model::Model;
                      conv_tol::Float64=1e-10, conv_window::Int=3, verbose::Bool=false,
                      spheres::Union{Nothing,Vector{<:Tuple}}=nothing, sphere_first_wann::Int=1,
                      froz_proj::Bool=false, proj_min::Float64=0.0, proj_max::Float64=1.0,
-                     sitesym=nothing)
+                     sitesym=nothing, gamma::Bool=false)
     model.eig !== nothing || error("disentanglement requires band energies (.eig)")
     nw = model.num_wann
     bv = model.bvectors
@@ -360,14 +360,17 @@ function disentangle(model::Model;
                     recip=(spheres === nothing ? nothing : model.lattice.B),
                     sphere_first_wann=sphere_first_wann)
     end
-    # NOTE: the symmetry-adapted disentanglement (combined disentanglement + site_symmetry, e.g.
-    # the H3S test) needs the reference's `dis_extract_symmetry` constrained Ω_I minimiser, which
-    # is a distinct algorithm from this Z-matrix iteration; naively projecting the subspace onto
-    # the symmetric manifold each step over-constrains it. It is not implemented — the
-    # site_symmetry LOCALISATION phase (isolated case, e.g. GaAs) is, and is validated. The
-    # `sitesym` argument is accepted for future use but not applied here.
     eigwin, Awin, Mwin = slim_data(eig, model.A, model.M, kpb, wd)
     Uopt = dis_project(Awin, wd, nw)
+    # Symmetry-adapted mode (site_symmetry with num_bands > num_wann): the reference's
+    # constrained Ω_I minimiser. Requires no frozen states (matches the reference's
+    # 'not implemented in symmetry-adapted mode' guard) and symmetric initial embeddings.
+    if sitesym !== nothing
+        all(==(0), wd.ndimfroz) ||
+            error("site_symmetry: a frozen window is not implemented in symmetry-adapted " *
+                  "mode (matches the reference)")
+        _symmetrize_uopt!(Uopt, sitesym, wd)
+    end
 
     wbtot = sum(@view bv.wb[:, 1])
     trace = Tuple{Int,Float64,Float64,Float64}[]
@@ -385,47 +388,68 @@ function disentangle(model::Model;
                 Zout[k] = Matrix(zmatrix(Mwin[k], Uopt, kpb, wd, bv, k, nw))
             end
         end
+        sitesym === nothing || symmetrize_zmatrix!(Zout, sitesym)
         if iter == 1
             Zin = Zout
         else
             for k in 1:nk
                 isempty(Zin[k]) && continue
+                # In symmetry-adapted mode only the irreducible representatives are mixed
+                # (only they feed the constrained update); the rest are never read.
+                sitesym === nothing || sitesym.ir2ik[sitesym.ik2ir[k]] == k || continue
                 Zin[k] = dis_mix_ratio .* Zout[k] .+ (1 - dis_mix_ratio) .* Zin[k]
                 Zin[k] = (Zin[k] + Zin[k]') ./ 2
             end
         end
 
-        # Ω_I(i-1): num_wann·wbtot per k, minus frozen overlap, minus the largest Z eigenvalues.
-        # The frozen contribution is evaluated for ALL k against the previous-iteration neighbour
-        # subspaces BEFORE any k is updated (matches the reference's Ω_I(i-1) definition).
-        wk = fill(nw * wbtot, nk)
-        for k in 1:nk
-            nf = wd.ndimfroz[k]
-            nf == 0 && continue
-            for nn in 1:bv.nntot
-                k2 = kpb[nn, k]
-                cww = Uopt[k]' * Mwin[k][nn] * Uopt[k2]
-                for m in 1:nf, n in 1:nw
-                    wk[k] -= bv.wb[nn, k] * abs2(cww[m, n])
+        local womegai1
+        if sitesym !== nothing
+            # Constrained Ω_I update at each irreducible representative; each carries its
+            # star's weight nsym/|G_k|, and −tr Re λ replaces the Z-eigenvalue sum.
+            wk = zeros(nk)
+            for ir in 1:sitesym.nkptirr
+                ik = sitesym.ir2ik[ir]
+                ngk = count(==(ik), @view sitesym.kptsym[:, ir])
+                wk[ik] = nw * wbtot * sitesym.nsym / ngk
+                λ = dis_extract_symmetry!(Uopt[ik], Zin[ik], sitesym, ik, wd.ndimwin[ik])
+                wk[ik] -= sum(real(λ[j, j]) for j in 1:nw)
+            end
+            _symmetrize_uopt!(Uopt, sitesym, wd)       # re-project reps + propagate the stars
+            womegai1 = sum(wk) / nk
+        else
+            # Ω_I(i-1): num_wann·wbtot per k, minus frozen overlap, minus the largest Z
+            # eigenvalues. The frozen contribution is evaluated for ALL k against the
+            # previous-iteration neighbour subspaces BEFORE any k is updated (matches the
+            # reference's Ω_I(i-1) definition).
+            wk = fill(nw * wbtot, nk)
+            for k in 1:nk
+                nf = wd.ndimfroz[k]
+                nf == 0 && continue
+                for nn in 1:bv.nntot
+                    k2 = kpb[nn, k]
+                    cww = Uopt[k]' * Mwin[k][nn] * Uopt[k2]
+                    for m in 1:nf, n in 1:nw
+                        wk[k] -= bv.wb[nn, k] * abs2(cww[m, n])
+                    end
                 end
             end
-        end
-        # Now diagonalise Z (fixed from iteration start), subtract eigenvalues, update U_opt.
-        for k in 1:nk
-            nf = wd.ndimfroz[k]
-            nf < nw || continue
-            F = eigen(Hermitian(Zin[k]))                # ascending
-            nsel = nw - nf
-            wk[k] -= sum(@view F.values[end-nsel+1:end])
-            vecs = @view F.vectors[:, end-nsel+1:end]
-            for (col, l) in enumerate(nf+1:nw)
-                Uopt[k][:, l] .= 0
-                for (i, ir) in enumerate(wd.indxnfroz[k])
-                    Uopt[k][ir, l] = vecs[i, col]
+            # Diagonalise Z (fixed from iteration start), subtract eigenvalues, update U_opt.
+            for k in 1:nk
+                nf = wd.ndimfroz[k]
+                nf < nw || continue
+                F = eigen(Hermitian(Zin[k]))                # ascending
+                nsel = nw - nf
+                wk[k] -= sum(@view F.values[end-nsel+1:end])
+                vecs = @view F.vectors[:, end-nsel+1:end]
+                for (col, l) in enumerate(nf+1:nw)
+                    Uopt[k][:, l] .= 0
+                    for (i, ir) in enumerate(wd.indxnfroz[k])
+                        Uopt[k][ir, l] = vecs[i, col]
+                    end
                 end
             end
+            womegai1 = sum(wk) / nk
         end
-        womegai1 = sum(wk) / nk
 
         womegai = omega_invariant(Mwin, Uopt, kpb, bv, nw)
         delta = womegai1 / womegai - 1
@@ -440,21 +464,53 @@ function disentangle(model::Model;
 
     omega_I = omega_invariant(Mwin, Uopt, kpb, bv, nw)
 
+    # Γ-only: the optimal subspace of real Γ data is conjugation-closed — rotate the
+    # embedding to a real orthonormal basis so the real-orthogonal localiser can take over.
+    if gamma
+        nk == 1 || error("gamma_only disentanglement requires a single k-point")
+        Uopt[1] = ComplexF64.(realify_subspace(Uopt[1]))
+    end
+
     # Post-iteration: diagonalise H in the optimal subspace, rotate U_opt to the eigenbasis.
+    # In symmetry-adapted mode only the eigenvalues are taken — U_opt must keep its
+    # star-relation U(Rk) = d·U(k)·D†, so the eigenbasis rotation is skipped (reference: the
+    # ceamp replacement is guarded by `.not. lsitesymmetry`).
     eigval_opt = Matrix{Float64}(undef, nw, nk)
     for k in 1:nk
         Hsub = Uopt[k]' * Diagonal(eigwin[k]) * Uopt[k]        # num_wann × num_wann
-        F = eigen(Hermitian(Hsub))                             # ascending
-        eigval_opt[:, k] = F.values
-        Uopt[k] = Uopt[k] * F.vectors
+        if gamma                                               # keep the embedding real
+            Fr = eigen(Symmetric(real.(Hsub)))
+            eigval_opt[:, k] = Fr.values
+            Uopt[k] = Uopt[k] * Fr.vectors
+        else
+            F = eigen(Hermitian(Hsub))                         # ascending
+            eigval_opt[:, k] = F.values
+            sitesym === nothing && (Uopt[k] = Uopt[k] * F.vectors)
+        end
     end
 
     # Handoff: num_wann×num_wann overlaps + initial square gauge from ⟨ψ̃|g⟩.
     Mrot0 = Array{ComplexF64,4}(undef, nw, nw, bv.nntot, nk)
     U0 = Array{ComplexF64,3}(undef, nw, nw, nk)
-    for k in 1:nk
-        caa = Uopt[k]' * Awin[k]                               # num_wann × num_wann
-        U0[:, :, k] = svd_orthonormalize(caa)
+    if sitesym === nothing
+        for k in 1:nk
+            caa = Uopt[k]' * Awin[k]                           # num_wann × num_wann
+            if gamma                                           # real Löwdin, real gauge
+                Fr = svd(real.(caa))
+                U0[:, :, k] = ComplexF64.(Fr.U * Fr.Vt)
+            else
+                U0[:, :, k] = svd_orthonormalize(caa)
+            end
+        end
+    else
+        # Square gauge at the representatives only, then symmetrise in the Wannier
+        # representation (d_band := d_wann) and reconstruct the stars.
+        stloc = replace_d_matrix_band(sitesym)
+        for ir in 1:sitesym.nkptirr
+            ik = sitesym.ir2ik[ir]
+            U0[:, :, ik] = svd_orthonormalize(Uopt[ik]' * Awin[ik])
+        end
+        symmetrize_u!(U0, stloc, stloc.d_band, stloc.d_wann)
     end
     for k in 1:nk, nn in 1:bv.nntot
         k2 = kpb[nn, k]
@@ -507,6 +563,8 @@ function disentangle(model::Model, win::WinInput; kwargs...)
         froz_min=win.dis_froz_min,
         froz_max=(win.dis_froz_max == -Inf ? nothing : win.dis_froz_max),
         num_iter=win.dis_num_iter, mix_ratio=win.dis_mix_ratio,
+        conv_tol=_getfloat(win.raw, "dis_conv_tol", 1e-10),
+        conv_window=_getint(win.raw, "dis_conv_window", 3),
         spheres=spheres, sphere_first_wann=sphere_first_wann,
         froz_proj=froz_proj, proj_min=proj_min, proj_max=proj_max, kwargs...)
 end

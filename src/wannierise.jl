@@ -191,7 +191,8 @@ function localize(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::BVect
                   algorithm::Symbol=:rcg, kwargs...)
     algorithm === :w90 && return _localize_w90(U0, Mrot0, bv; kwargs...)
     algorithm === :rcg && return _localize_rcg(U0, Mrot0, bv; kwargs...)
-    error("unknown localisation algorithm $algorithm (expected :rcg or :w90)")
+    algorithm === :gamma && return _localize_gamma(U0, Mrot0, bv; kwargs...)
+    error("unknown localisation algorithm $algorithm (expected :rcg, :w90 or :gamma)")
 end
 
 function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::BVectors;
@@ -199,17 +200,24 @@ function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
                   conv_tol::Float64=CONV_TOL_DEFAULT, conv_window::Int=-1,
                   verbose::Bool=false,
                   guides::Union{Nothing,Matrix{Float64}}=nothing,
-                  precond::Union{Nothing,NamedTuple}=nothing, slwf=nothing, sitesym=nothing)
+                  precond::Union{Nothing,NamedTuple}=nothing, slwf=nothing, sitesym=nothing,
+                  ss=nothing)
     slwf === nothing || error("SLWF+C requires algorithm = :rcg (the Ω_C objective path)")
     sitesym === nothing || error("site_symmetry requires algorithm = :rcg")
     kpb = bv.kpb
     nw = size(U0, 1)
     nk = size(U0, 3)
     wbtot = sum(@view bv.wb[:, 1])
+    # Stengel–Spaldin: swap in the single-point objective and its gradient; the optimiser
+    # (trial step + parabolic fit, FR-CG) is untouched, so the trajectory — and therefore the
+    # minimum basin — tracks the reference run.
+    _spread(M) = ss === nothing ? compute_spread(M, bv; guides=guides) : ss_spread(M, bv, ss)
+    _grad(M, centres) = ss === nothing ? omega_gradient(M, bv, centres; guides=guides) :
+                                         ss_gradient(M, bv, ss)
 
     U = copy(U0)
     Mrot = copy(Mrot0)
-    sr = compute_spread(Mrot, bv; guides=guides)
+    sr = _spread(Mrot)
     omega_trace = Float64[sr.Ω]
     verbose && @info "iter 0" Ω=sr.Ω ΩI=sr.ΩI ΩOD=sr.ΩOD ΩD=sr.ΩD
 
@@ -221,7 +229,7 @@ function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
     iter = 0
     while iter < num_iter
         iter += 1
-        G = omega_gradient(Mrot, bv, sr.centres; guides=guides)
+        G = _grad(Mrot, sr.centres)
         # Preconditioned CG: replace the steepest-descent gradient by the Lorentzian
         # real-space-filtered gradient M⁻¹G (the FR direction and mixed inner product use it;
         # the line-search slope keeps the TRUE gradient — see precond-cg.md).
@@ -265,7 +273,7 @@ function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
         Rtrial = expm_all(cdq .* (trial_step / (4.0 * wbtot)))
         Ut = copy(U); Mt = copy(Mrot)
         apply_rotation!(Ut, Mt, kpb, Rtrial)
-        srt = compute_spread(Mt, bv; guides=guides)
+        srt = _spread(Mt)
 
         alphamin, _, lquad = optimal_step(sr.Ω, srt.Ω, doda0, trial_step)
 
@@ -273,7 +281,7 @@ function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
         if lquad
             Ropt = expm_all(cdq .* (alphamin / (4.0 * wbtot)))
             apply_rotation!(U, Mrot, kpb, Ropt)
-            sr = compute_spread(Mrot, bv; guides=guides)
+            sr = _spread(Mrot)
         else
             U, Mrot, sr = Ut, Mt, srt
         end
@@ -290,6 +298,8 @@ function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
         end
     end
 
+    # Stengel–Spaldin: report the standard MV decomposition at the converged gauge.
+    ss === nothing || (sr = compute_spread(Mrot, bv))
     return WannieriseResult(U, Mrot, sr, omega_trace, iter, converged)
 end
 
@@ -309,16 +319,18 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
                        verbose::Bool=false, num_cg_steps::Int=0,
                        guides::Union{Nothing,Matrix{Float64}}=nothing,
                        precond::Union{Nothing,NamedTuple}=nothing,
-                       slwf=nothing, sitesym=nothing)   # num_cg_steps/guides/precond: :w90-only
+                       slwf=nothing, sitesym=nothing,
+                       ss=nothing)                      # num_cg_steps/guides/precond: :w90-only
     (guides === nothing && precond === nothing) ||
         error("guiding_centres / precond require algorithm = :w90 (the reference path)")
+    (ss === nothing || slwf === nothing) || error("use_ss_functional is incompatible with SLWF+C")
     kpb = bv.kpb
     wbtot = sum(@view bv.wb[:, 1])
     fourw = 4.0 * wbtot
 
     U = copy(U0)
     Mrot = copy(Mrot0)
-    sr = compute_spread(Mrot, bv; slwf=slwf)
+    sr = ss === nothing ? compute_spread(Mrot, bv; slwf=slwf) : ss_spread(Mrot, bv, ss)
     omega_trace = Float64[sr.Ω]
 
     inner(A, B) = real(dot(A, B))            # Re Σ_k tr(A_k† B_k)
@@ -331,7 +343,8 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
     iter = 0
     while iter < num_iter
         iter += 1
-        G = slwf === nothing ? omega_gradient(Mrot, bv, sr.centres) : slwf_gradient(Mrot, bv, slwf)
+        G = ss !== nothing ? ss_gradient(Mrot, bv, ss) :
+            slwf === nothing ? omega_gradient(Mrot, bv, sr.centres) : slwf_gradient(Mrot, bv, slwf)
         sitesym === nothing || symmetrize_gradient!(G, sitesym)   # project onto symmetric tangent
         gnorm2 = inner(G, G)
         if gnorm2 < 1e-24                     # stationary point
@@ -364,7 +377,7 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
             R = expm_all(d .* (s / fourw))
             Ut = copy(U); Mt = copy(Mrot)
             apply_rotation!(Ut, Mt, kpb, R)
-            srt = compute_spread(Mt, bv; slwf=slwf)
+            srt = ss === nothing ? compute_spread(Mt, bv; slwf=slwf) : ss_spread(Mt, bv, ss)
             if srt.Ω <= sr.Ω + 1.0e-4 * s * slope    # Armijo sufficient decrease
                 # one parabolic refinement through (0, sr.Ω), slope, (s, srt.Ω)
                 denom = srt.Ω - sr.Ω - slope * s
@@ -374,7 +387,7 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
                         Ro = expm_all(d .* (s_opt / fourw))
                         Uo = copy(U); Mo = copy(Mrot)
                         apply_rotation!(Uo, Mo, kpb, Ro)
-                        sro = compute_spread(Mo, bv; slwf=slwf)
+                        sro = ss === nothing ? compute_spread(Mo, bv; slwf=slwf) : ss_spread(Mo, bv, ss)
                         if sro.Ω < srt.Ω
                             Ut, Mt, srt, s = Uo, Mo, sro, s_opt
                         end
@@ -406,6 +419,9 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
         end
     end
 
+    # Stengel–Spaldin: the objective drove the minimisation; report the standard MV
+    # decomposition at the converged gauge (the reference's Final State block).
+    ss === nothing || (sr = compute_spread(Mrot, bv))
     return WannieriseResult(U, Mrot, sr, omega_trace, iter, converged)
 end
 

@@ -107,5 +107,13 @@ function main(seedname::AbstractString; pp::Bool=false, write_files::Bool=true, 
             end
         end
     end
+    # Ballistic transport (transport_mode = bulk): Landauer T(E) + DOS of the 1D chain.
+    if _winflag(win, "transport", false)
+        if result.eig_interp === nothing
+            @warn "skipping transport: no band energies (.eig) available"
+        else
+            run_transport(model, win, result; seedname=seedname)
+        end
+    end
     return model, win, result
 end

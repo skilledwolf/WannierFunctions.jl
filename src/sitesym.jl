@@ -25,7 +25,16 @@ struct Sitesym
     kptsym::Matrix{Int}                  # (nsym, nkptirr)
     d_wann::Array{ComplexF64,4}          # (nw, nw, nsym, nkptirr)
     d_band::Array{ComplexF64,4}          # (nb, nb, nsym, nkptirr)
+    eps::Float64                         # symmetrize_eps convergence threshold
 end
+
+Sitesym(nsym, nkptirr, ik2ir, ir2ik, kptsym, d_wann, d_band) =
+    Sitesym(nsym, nkptirr, ik2ir, ir2ik, kptsym, d_wann, d_band, 1e-3)
+
+"After disentanglement the gauge is square (num_wann): the band representation is replaced by
+the Wannier one for the localisation phase (the reference's `sitesym_replace_d_matrix_band`)."
+replace_d_matrix_band(s::Sitesym) =
+    Sitesym(s.nsym, s.nkptirr, s.ik2ir, s.ir2ik, s.kptsym, s.d_wann, s.d_wann, s.eps)
 
 Base.show(io::IO, ::MIME"text/plain", s::Sitesym) =
     print(io, "Sitesym: ", s.nsym, " symmetries, ", s.nkptirr, " irreducible k")
@@ -37,7 +46,7 @@ Read a `seedname.dmn` (formatted, list-directed). Line 2 is `num_bands nsym nkpt
 then `ik2ir` (num_kpts), `ir2ik` (nkptirr), `kptsym` (nsym×nkptirr, isym fastest), `d_wann`
 (nw²×nsym×nkptirr, complex, i fastest), `d_band` (nb²×nsym×nkptirr, complex).
 """
-function read_dmn(path::AbstractString, num_bands::Int, num_wann::Int)
+function read_dmn(path::AbstractString, num_bands::Int, num_wann::Int; eps::Float64=1e-3)
     lines = readlines(path)
     # Line 1 is the header comment; everything after is list-directed data. Strip () and commas.
     raw = replace(join(lines[2:end], " "), '(' => ' ', ')' => ' ', ',' => ' ')
@@ -61,7 +70,7 @@ function read_dmn(path::AbstractString, num_bands::Int, num_wann::Int)
     for ir in 1:nkptirr, is in 1:nsym, j in 1:num_bands, i in 1:num_bands
         d_band[i, j, is, ir] = nextcplx()
     end
-    return Sitesym(nsym, nkptirr, ik2ir, ir2ik, kptsym, d_wann, d_band)
+    return Sitesym(nsym, nkptirr, ik2ir, ir2ik, kptsym, d_wann, d_band, eps)
 end
 
 "Löwdin orthonormalisation of a square matrix: U = W·V† from the SVD A = W·Σ·V†."
@@ -82,7 +91,7 @@ until convergence. `dband`/`dwann` select the representation (num_bands / num_wa
 """
 function symmetrize_ukirr(U0::AbstractMatrix{ComplexF64}, s::Sitesym, ir::Int,
                           dband::Array{ComplexF64,4}, dwann::Array{ComplexF64,4}, n::Int;
-                          eps::Float64=1e-3, maxiter::Int=100)
+                          eps::Float64=s.eps, maxiter::Int=100)
     lg = _little_group(s, ir)
     nw = size(U0, 2)
     U = copy(U0[1:n, :])
@@ -156,6 +165,84 @@ function symmetrize_rotation!(d::Array{ComplexF64,3}, s::Sitesym)
 end
 
 """
+    symmetrize_zmatrix!(Z, s)
+
+Symmetrise the disentanglement Z matrices across each k-star and little group,
+`Z(k) ← (1/|G_k|) Σ_{R'∈G_k∪1} d†(R') [Σ_star d†(R) Z(Rk) d(R)] d(R')`, updating only the
+irreducible representatives (non-representative entries are never used afterwards). Each
+distinct star member contributes once, through the first symmetry that reaches it.
+"""
+function symmetrize_zmatrix!(Z::Vector{Matrix{ComplexF64}}, s::Sitesym)
+    lfound = falses(length(Z))
+    for ir in 1:s.nkptirr
+        ik = s.ir2ik[ir]
+        nd = size(Z[ik], 1)
+        lfound[ik] = true
+        acc = copy(Z[ik])
+        for is in 2:s.nsym
+            irk = s.kptsym[is, ir]
+            lfound[irk] && continue
+            lfound[irk] = true
+            d = @view s.d_band[1:nd, 1:nd, is, ir]
+            acc .+= d' * Z[irk] * d
+        end
+        tmp = copy(acc)
+        ngk = 1
+        for is in 2:s.nsym
+            s.kptsym[is, ir] == ik || continue
+            ngk += 1
+            d = @view s.d_band[1:nd, 1:nd, is, ir]
+            acc .+= d' * tmp * d
+        end
+        Z[ik] = acc ./ ngk
+    end
+    return Z
+end
+
+"""
+    dis_extract_symmetry!(U, Z, s, ik, n) -> λ
+
+Constrained Ω_I step at irreducible representative `ik` (the reference's
+`sitesym_dis_extract_symmetry`): steepest-descent on the subspace embedding `U` (n × num_wann)
+along `ΔU = Z·U − U·λ` with `λ = U†ZU`, maximising the Rayleigh quotient band-by-band in the
+2-dimensional span {u_i, Δu_i} (generalized 2×2 eigenproblem, larger eigenvalue), then
+re-projecting onto the symmetric manifold each sweep. Returns the final `λ` — its real trace
+is the k-point's Z-eigenvalue-sum surrogate for the Ω_I bookkeeping.
+"""
+function dis_extract_symmetry!(U::AbstractMatrix{ComplexF64}, Z::AbstractMatrix{ComplexF64},
+                               s::Sitesym, ik::Int, n::Int)
+    nw = size(U, 2)
+    λ = zeros(ComplexF64, nw, nw)
+    ir = s.ik2ir[ik]
+    Unew = similar(U, n, nw)
+    for _ in 1:50
+        ZU = Z * U                               # n × nw
+        λ = U' * ZU
+        ΔU = ZU - U * λ
+        sum(abs, ΔU) < 1e-10 && return λ
+        for i in 1:nw
+            u = @view U[:, i]
+            du = @view ΔU[:, i]
+            zu = @view ZU[:, i]
+            s22 = real(dot(du, du))
+            if abs(s22) < 1e-10
+                Unew[:, i] = u
+                continue
+            end
+            h12 = dot(zu, du)                    # ⟨Zu|Δu⟩ (Z hermitian)
+            s12 = dot(u, du)
+            H2 = ComplexF64[real(dot(u, zu)) h12; conj(h12) real(dot(du, Z * du))]
+            S2 = ComplexF64[real(dot(u, u)) s12; conj(s12) s22]
+            F = eigen(Hermitian(H2), Hermitian(S2))          # ascending; v†S v = 1
+            v = @view F.vectors[:, 2]                        # larger eigenvalue
+            @. Unew[:, i] = v[1] * u + v[2] * du
+        end
+        U .= symmetrize_ukirr(Unew, s, ir, s.d_band, s.d_wann, n)
+    end
+    return λ
+end
+
+"""
     symmetrize_gradient!(G, s)
 
 Project the num_wann gradient field onto the symmetric-gauge tangent space (localisation
@@ -183,11 +270,11 @@ function symmetrize_gradient!(G::Array{ComplexF64,3}, s::Sitesym)
         ik = s.ir2ik[ir]
         lg = _little_group(s, ir)
         length(lg) <= 1 && continue
-        acc = copy(@view G[:, :, ik])
+        acc = copy(@view G[:, :, ik])                 # the isym = 1 (identity) term
         for is in lg
+            is == 1 && continue
             acc .+= (@view D[:, :, is, ir])' * (@view G[:, :, ik]) * (@view D[:, :, is, ir])
         end
-        # NB: the reference accumulates onto G[ik] (including isym=1 as identity), then /ngk
         G[:, :, ik] = acc ./ length(lg)
     end
     return G

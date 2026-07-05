@@ -20,6 +20,10 @@ const SUPPORTED_KEYWORDS = Set{String}([
     "dis_num_iter", "dis_mix_ratio", "conv_tol", "conv_window", "trial_step", "num_cg_steps",
     "bands_plot", "bands_num_points", "write_hr", "hr_plot", "write_tb", "guiding_centres",
     "postproc_setup", "exclude_bands", "gamma_only", "spinors",
+    "site_symmetry", "symmetrize_eps", "higher_order_n", "dis_conv_tol", "dis_conv_window",
+    "use_ss_functional",
+    "transport", "transport_mode", "one_dim_axis", "tran_win_min", "tran_win_max",
+    "tran_energy_step", "tran_write_ht", "dist_cutoff", "dist_cutoff_mode", "hr_cutoff",
     "wannier_plot", "wannier_plot_list", "wannier_plot_supercell", "wannier_plot_format",
     "berry", "berry_task", "berry_kmesh", "fermi_energy",
 ])

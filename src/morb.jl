@@ -17,10 +17,15 @@ const EV_AU = 3.674932540e-2      # eV → Hartree (CODATA2006, constants.F90:17
 """
     read_uhu(path; num_bands, num_kpts, nntot) -> uHu
 
-Read a formatted `.uHu` file: `uHu[m, n, b1, b2, q] = <u_{m,q+b1}|H_q|u_{n,q+b2}>`
+Read a `.uHu` file: `uHu[m, n, b1, b2, q] = <u_{m,q+b1}|H_q|u_{n,q+b2}>`
 (the transpose applied on read, as the reference does for pw2wannier90's ordering).
+Formatted and Fortran-unformatted files are distinguished automatically.
 """
 function read_uhu(path::AbstractString; num_bands::Int, num_kpts::Int, nntot::Int)
+    # Sniff Fortran unformatted (pw2wannier90's default): the file starts with a 4-byte
+    # little-endian record marker containing NUL bytes; a formatted file starts with text.
+    isbinary = open(io -> any(==(0x00), read(io, 4)), path, "r")
+    isbinary && return _read_uhu_unformatted(path, num_bands, num_kpts, nntot)
     open(path, "r") do io
         readline(io)                                    # header
         nb, nk, nn = parse.(Int, split(readline(io)))
@@ -32,6 +37,34 @@ function read_uhu(path::AbstractString; num_bands::Int, num_kpts::Int, nntot::In
             for m in 1:nb, n in 1:nb
                 t = split(readline(io))
                 u[m, n, b1, b2, q] = complex(parse(Float64, t[1]), parse(Float64, t[2]))
+            end
+        end
+        return u
+    end
+end
+
+"Read a Fortran-unformatted `.uHu` (sequential records, 4-byte length markers)."
+function _read_uhu_unformatted(path::AbstractString, num_bands::Int, num_kpts::Int, nntot::Int)
+    open(path, "r") do io
+        record() = begin
+            len = read(io, Int32)
+            data = read(io, Int(len))
+            read(io, Int32) == len || error("corrupt Fortran record in $path")
+            data
+        end
+        record()                                        # header string
+        dims = reinterpret(Int32, record())
+        nb, nk, nn = Int(dims[1]), Int(dims[2]), Int(dims[3])
+        (nb == num_bands && nk == num_kpts && nn == nntot) ||
+            error(".uHu dims ($nb,$nk,$nn) don't match model ($num_bands,$num_kpts,$nntot)")
+        u = Array{ComplexF64,5}(undef, nb, nb, nntot, nntot, nk)
+        for q in 1:nk, b2 in 1:nntot, b1 in 1:nntot
+            blk = reinterpret(ComplexF64, record())     # Ho(n,m), n inner — one record per block
+            length(blk) == nb * nb || error("unexpected .uHu record size in $path")
+            idx = 0
+            for m in 1:nb, n in 1:nb
+                idx += 1
+                u[m, n, b1, b2, q] = blk[idx]
             end
         end
         return u

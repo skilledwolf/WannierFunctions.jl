@@ -61,7 +61,7 @@ function run_wannier(model::Model, win::WinInput; verbose::Bool=false, sitesym=n
         # Branch-cut guides initialised from the projection centres (Cartesian Å), in WF order.
         projs = parse_projections(win)
         if length(projs) == model.num_wann
-            lopts[:guides] = hcat([model.lattice.A * p.site for p in projs]...)
+            lopts[:guides] = Matrix{Float64}(hcat([model.lattice.A * p.site for p in projs]...))
         end
     end
     if _getbool(win.raw, "precond", false)
@@ -72,17 +72,34 @@ function run_wannier(model::Model, win::WinInput; verbose::Bool=false, sitesym=n
     # SLWF+C selective localisation (isolated case): route through the :rcg path which carries
     # the Ω_C objective + gradient. Active when slwf_num < num_wann.
     slwf = _slwf_from_win(win, model)
+    # Stengel–Spaldin functional: alternative single-point objective. It stays on the :w90
+    # optimiser so the trajectory (and thus the minimum basin — the SS surface has several)
+    # tracks the reference run. Guiding centres only steer the per-k log branch cut, which the
+    # single-point objective does not evaluate — drop them (the reference's SS branch likewise
+    # ignores the sheets).
+    if _getbool(win.raw, "use_ss_functional", false)
+        lopts[:ss] = ss_data(model.bvectors)
+        delete!(lopts, :guides)
+    end
     if slwf !== nothing || sitesym !== nothing
         algo, ni = :rcg, max(win.num_iter, 2000)      # SLWF+C / site_symmetry use the :rcg path
+    elseif win.gamma_only
+        # real-orthogonal Jacobi sweeps (wann_main_gamma) — real gauge, real WFs. Guiding
+        # centres do not steer the sweeps, only the centre log-branch bookkeeping (the driver
+        # mirrors the reference: ignored for the orthorhombic 3-b case, sheets otherwise).
+        algo, ni = :gamma, win.num_iter
+        (haskey(lopts, :ss) || haskey(lopts, :precond)) &&
+            error("gamma_only does not support use_ss_functional / precond")
     else
         algo, ni = :w90, win.num_iter
     end
-    sitesym === nothing || model.num_bands == model.num_wann ||
-        error("site_symmetry with disentanglement (num_bands > num_wann) is not yet supported; " *
-              "the localisation-phase symmetrisation is implemented for the isolated case")
     if model.num_bands > model.num_wann
-        # win-aware disentanglement (honours dis_spheres / dis_froz_proj / dis_proj_* / windows)
-        dis = disentangle(model, win; verbose=verbose)
+        # win-aware disentanglement (honours dis_spheres / dis_froz_proj / dis_proj_* / windows;
+        # with site_symmetry, the constrained Ω_I minimiser keeps the subspaces symmetry-adapted)
+        dis = disentangle(model, win; verbose=verbose, sitesym=sitesym, gamma=win.gamma_only)
+        # After disentanglement the gauge is square: the localisation phase symmetrises in the
+        # Wannier representation (the reference's replace_d_matrix_band).
+        sitesym === nothing || (lopts[:sitesym] = replace_d_matrix_band(sitesym))
         res = localize(dis.U0, dis.Mrot0, model.bvectors;
                        num_iter=ni, algorithm=algo, verbose=verbose, slwf=slwf, lopts...)
         return WannierResult(res.U, res.Mrot, dis.eigval_opt, res.spread, true, dis.omega_I,
@@ -124,7 +141,8 @@ function run_wannier(seedname::AbstractString; verbose::Bool=false)
     # site_symmetry: load the .dmn (symmetry-adapted Wannier functions).
     ss = nothing
     if _getbool(win.raw, "site_symmetry", false) && isfile(seedname * ".dmn")
-        ss = read_dmn(seedname * ".dmn", model.num_bands, model.num_wann)
+        ss = read_dmn(seedname * ".dmn", model.num_bands, model.num_wann;
+                      eps=_getfloat(win.raw, "symmetrize_eps", 1e-3))
     end
     return model, win, run_wannier(model, win; verbose=verbose, sitesym=ss)
 end
