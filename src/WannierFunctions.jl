@@ -44,6 +44,7 @@ include("kdotp.jl")
 include("shiftcurrent.jl")
 include("kpath.jl")
 include("extras.jl")
+include("tbmodel.jl")
 include("wout.jl")
 include("cli.jl")
 include("show.jl")
@@ -72,6 +73,9 @@ export gyrotropic, write_gyrotropic
 export kdotp, write_kdotp
 export shift_current, write_shift_current
 export write_rmn, write_bxsf, write_cube, parse_atoms
+export hr_diagonal, write_hr_diag, write_xyz, translate_home
+export tabulate_3d, write_frmsf
+export read_tb, tb_model
 export boltzwann, BoltzWannResult
 export ShcModel, ShcRyooModel, shc_fermiscan, shc_freqscan, read_spn, read_shu, write_shc
 export kslice, write_kslice
@@ -88,6 +92,17 @@ function read_model(seedname::AbstractString)
     win = read_win(seedname * ".win")
     A, nb_a, nk_a, nw_a = read_amn(seedname * ".amn")
     M, kpb, gpb, nb_m, nk_m, nntot = read_mmn(seedname * ".mmn")
+
+    # select_projections: keep only the named .amn columns as the WFs (num_proj > num_wann).
+    if haskey(win.raw, "select_projections") && nw_a > win.num_wann
+        sel = parse_range_list(replace(strip(win.raw["select_projections"]), r"\s+" => ","))
+        length(sel) == win.num_wann ||
+            error("select_projections picks $(length(sel)) columns but num_wann is $(win.num_wann)")
+        all(c -> 1 <= c <= nw_a, sel) ||
+            error("select_projections indices out of range 1:$nw_a")
+        A = A[:, sel, :]
+        nw_a = win.num_wann
+    end
 
     nb_a == nb_m || error("num_bands mismatch between .amn ($nb_a) and .mmn ($nb_m)")
     nk_a == nk_m || error("num_kpts mismatch between .amn ($nk_a) and .mmn ($nk_m)")

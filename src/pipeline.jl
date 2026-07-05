@@ -54,12 +54,32 @@ end
 
 "Compat method: drive the pipeline from a parsed `.win` (reference-faithful `:w90` optimiser)."
 function run_wannier(model::Model, win::WinInput; verbose::Bool=false)
-    return run_wannier(model;
-        win_min=win.dis_win_min, win_max=win.dis_win_max,
-        froz_min=win.dis_froz_min,
-        froz_max=(win.dis_froz_max == -Inf ? nothing : win.dis_froz_max),
-        dis_num_iter=win.dis_num_iter, dis_mix_ratio=win.dis_mix_ratio,
-        num_iter=win.num_iter, algorithm=:w90, verbose=verbose)
+    # Optional :w90-path localisation controls from the .win.
+    lopts = Dict{Symbol,Any}()
+    if _getbool(win.raw, "guiding_centres", false)
+        # Branch-cut guides initialised from the projection centres (Cartesian Å), in WF order.
+        projs = parse_projections(win)
+        if length(projs) == model.num_wann
+            lopts[:guides] = hcat([model.lattice.A * p.site for p in projs]...)
+        end
+    end
+    if _getbool(win.raw, "precond", false)
+        irvec, ndegen = wigner_seitz(model.lattice, model.kgrid.mp_grid)
+        Rcart = [model.lattice.A * SVector{3,Float64}(r...) for r in irvec]
+        lopts[:precond] = (kfrac=model.kgrid.frac, irvec=irvec, ndegen=ndegen, Rcart=Rcart)
+    end
+    if model.num_bands > model.num_wann
+        # win-aware disentanglement (honours dis_spheres / dis_froz_proj / dis_proj_* / windows)
+        dis = disentangle(model, win; verbose=verbose)
+        res = localize(dis.U0, dis.Mrot0, model.bvectors;
+                       num_iter=win.num_iter, algorithm=:w90, verbose=verbose, lopts...)
+        return WannierResult(res.U, res.Mrot, dis.eigval_opt, res.spread, true, dis.omega_I,
+                             res.niter, res.converged, dis)
+    else
+        res = wannierise(model; num_iter=win.num_iter, algorithm=:w90, verbose=verbose, lopts...)
+        return WannierResult(res.U, res.Mrot, model.eig, res.spread, false, res.spread.ΩI,
+                             res.niter, res.converged, nothing)
+    end
 end
 
 """

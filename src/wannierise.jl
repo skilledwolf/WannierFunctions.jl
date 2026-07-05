@@ -48,7 +48,8 @@ Analytic gradient dΩ/dW as the anti-Hermitian matrix `G[:,:,k]`, following `wan
 `G = (4/N_k) Σ_{k,b} w_b ( A[R] − S[T] )` with `R_{mn}=M_{mn}·conj(M_nn)`,
 `R̃_{mn}=M_{mn}/M_nn`, `q_n = Im ln M_nn + b·r_n`.
 """
-function omega_gradient(Mrot::Array{ComplexF64,4}, bv::BVectors, centres::Matrix{Float64})
+function omega_gradient(Mrot::Array{ComplexF64,4}, bv::BVectors, centres::Matrix{Float64};
+                        guides::Union{Nothing,Matrix{Float64}}=nothing)
     nw = size(Mrot, 1); nntot = size(Mrot, 3); nk = size(Mrot, 4)
     G = zeros(ComplexF64, nw, nw, nk)
     @maybe_threads (nk >= THREAD_MIN) for k in 1:nk
@@ -61,7 +62,7 @@ function omega_gradient(Mrot::Array{ComplexF64,4}, bv::BVectors, centres::Matrix
         bx, by, bz = bv.bvec[1, b, k], bv.bvec[2, b, k], bv.bvec[3, b, k]
         @inbounds for n in 1:nw
             mnn[n] = Mrot[n, n, b, k]
-            lnt[n] = w * imag(log(mnn[n]))
+            lnt[n] = w * _guided_imln(mnn[n], guides, n, bx, by, bz)
             rnkb[n] = bx * centres[1, n] + by * centres[2, n] + bz * centres[3, n]
         end
         @inbounds for n in 1:nw, m in 1:nw
@@ -81,6 +82,34 @@ function omega_gradient(Mrot::Array{ComplexF64,4}, bv::BVectors, centres::Matrix
     end
     G .*= (4.0 / nk)
     return G
+end
+
+# Preconditioner: real-space Lorentzian low-pass filter of the gradient (precond-cg.md).
+# g_R = (1/N_k) Σ_k e^{-i2πk·R} G_k ; g_R *= 1/(1+|R|²/α), α = 10·Ω/nw ; g̃_k = Σ_R e^{+i2πk·R} g_R/ndegen.
+# With the filter ≡ 1 the forward+backward pair is the identity, so it is purely the R-weighting.
+function _precond_filter(G::Array{ComplexF64,3}, pc::NamedTuple, om_tot::Float64, nw::Int)
+    kfrac, irvec, ndegen, Rcart = pc.kfrac, pc.irvec, pc.ndegen, pc.Rcart
+    nk = size(G, 3); nr = length(irvec)
+    α = 10.0 * om_tot / nw
+    gR = zeros(ComplexF64, nw, nw, nr)
+    for ir in 1:nr
+        R = SVector{3,Float64}(irvec[ir]...)
+        acc = @view gR[:, :, ir]
+        for k in 1:nk
+            fac = cis(-TWOPI * dot(kfrac[k], R)) / nk
+            @views acc .+= fac .* G[:, :, k]
+        end
+        acc .*= 1.0 / (1.0 + dot(Rcart[ir], Rcart[ir]) / α)
+    end
+    Gp = zeros(ComplexF64, nw, nw, nk)
+    for k in 1:nk
+        acc = @view Gp[:, :, k]
+        for ir in 1:nr
+            fac = cis(TWOPI * dot(kfrac[k], SVector{3,Float64}(irvec[ir]...))) / ndegen[ir]
+            @views acc .+= fac .* gR[:, :, ir]
+        end
+    end
+    return Gp
 end
 
 # Parabolic line search (internal_optimal_step): returns (alphamin, falphamin, lquad).
@@ -163,7 +192,9 @@ end
 function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::BVectors;
                   num_iter::Int=100, trial_step::Float64=2.0, num_cg_steps::Int=5,
                   conv_tol::Float64=CONV_TOL_DEFAULT, conv_window::Int=-1,
-                  verbose::Bool=false)
+                  verbose::Bool=false,
+                  guides::Union{Nothing,Matrix{Float64}}=nothing,
+                  precond::Union{Nothing,NamedTuple}=nothing)
     kpb = bv.kpb
     nw = size(U0, 1)
     nk = size(U0, 3)
@@ -171,7 +202,7 @@ function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
 
     U = copy(U0)
     Mrot = copy(Mrot0)
-    sr = compute_spread(Mrot, bv)
+    sr = compute_spread(Mrot, bv; guides=guides)
     omega_trace = Float64[sr.Ω]
     verbose && @info "iter 0" Ω=sr.Ω ΩI=sr.ΩI ΩOD=sr.ΩOD ΩD=sr.ΩD
 
@@ -183,10 +214,14 @@ function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
     iter = 0
     while iter < num_iter
         iter += 1
-        G = omega_gradient(Mrot, bv, sr.centres)
+        G = omega_gradient(Mrot, bv, sr.centres; guides=guides)
+        # Preconditioned CG: replace the steepest-descent gradient by the Lorentzian
+        # real-space-filtered gradient M⁻¹G (the FR direction and mixed inner product use it;
+        # the line-search slope keeps the TRUE gradient — see precond-cg.md).
+        Gpre = precond === nothing ? G : _precond_filter(G, precond, sr.Ω, nw)
 
         # Fletcher–Reeves conjugate-gradient coefficient.
-        gcnorm1 = sum(abs2, G)
+        gcnorm1 = precond === nothing ? sum(abs2, G) : real(dot(Gpre, G))
         local gcfac
         if iter == 1 || ncg >= num_cg_steps
             gcfac = 0.0; ncg = 0
@@ -202,7 +237,9 @@ function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
         end
         gcnorm0 = gcnorm1
 
-        cdq = G .+ gcfac .* cdqkeep
+        # Steepest-descent component uses the (possibly filtered) gradient; the CG-memory term
+        # β·d_prev is untouched. The line-search slope doda0 always uses the TRUE gradient G.
+        cdq = Gpre .+ gcfac .* cdqkeep
         doda0 = -real(dot(G, cdq)) / (4.0 * wbtot)     # dot(a,b)=Σ conj(a)·b
         if doda0 > 0.0
             if ncg > 0
@@ -221,7 +258,7 @@ function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
         Rtrial = expm_all(cdq .* (trial_step / (4.0 * wbtot)))
         Ut = copy(U); Mt = copy(Mrot)
         apply_rotation!(Ut, Mt, kpb, Rtrial)
-        srt = compute_spread(Mt, bv)
+        srt = compute_spread(Mt, bv; guides=guides)
 
         alphamin, _, lquad = optimal_step(sr.Ω, srt.Ω, doda0, trial_step)
 
@@ -229,7 +266,7 @@ function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
         if lquad
             Ropt = expm_all(cdq .* (alphamin / (4.0 * wbtot)))
             apply_rotation!(U, Mrot, kpb, Ropt)
-            sr = compute_spread(Mrot, bv)
+            sr = compute_spread(Mrot, bv; guides=guides)
         else
             U, Mrot, sr = Ut, Mt, srt
         end
@@ -262,7 +299,11 @@ end
 function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::BVectors;
                        num_iter::Int=1000, trial_step::Float64=2.0,
                        conv_tol::Float64=CONV_TOL_DEFAULT, conv_window::Int=3,
-                       verbose::Bool=false, num_cg_steps::Int=0)   # num_cg_steps accepted for API parity; unused
+                       verbose::Bool=false, num_cg_steps::Int=0,
+                       guides::Union{Nothing,Matrix{Float64}}=nothing,
+                       precond::Union{Nothing,NamedTuple}=nothing)   # num_cg_steps/guides/precond: :w90-only
+    (guides === nothing && precond === nothing) ||
+        error("guiding_centres / precond require algorithm = :w90 (the reference path)")
     kpb = bv.kpb
     wbtot = sum(@view bv.wb[:, 1])
     fourw = 4.0 * wbtot

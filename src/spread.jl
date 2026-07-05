@@ -32,7 +32,18 @@ end
 Evaluate Wannier centres, per-function spreads, and the Ω_I/Ω_OD/Ω_D decomposition from the
 gauge-rotated overlaps `Mrot[n,n',b,k]` and the neighbour geometry `bv::BVectors`.
 """
-function compute_spread(Mrot::Array{ComplexF64,4}, bv::BVectors)
+# Im-ln of the diagonal overlap, optionally re-branched about b·rguide_n (guiding centres):
+# q = Im ln(e^{i b·rg}·M_nn) − b·rg selects the phase sheet near b·rguide instead of near 0,
+# preventing a Wannier function from locking onto the wrong periodic image. With no guides it
+# reduces exactly to the principal branch Im ln M_nn.
+@inline function _guided_imln(mnn::ComplexF64, guides, n::Int, bx::Float64, by::Float64, bz::Float64)
+    guides === nothing && return imag(log(mnn))
+    sheet = bx * guides[1, n] + by * guides[2, n] + bz * guides[3, n]
+    return imag(log(cis(sheet) * mnn)) - sheet
+end
+
+function compute_spread(Mrot::Array{ComplexF64,4}, bv::BVectors;
+                        guides::Union{Nothing,Matrix{Float64}}=nothing)
     nw = size(Mrot, 1)
     nntot = size(Mrot, 3)
     nk = size(Mrot, 4)
@@ -45,7 +56,7 @@ function compute_spread(Mrot::Array{ComplexF64,4}, bv::BVectors)
             w = bv.wb[b, k]
             bx, by, bz = bv.bvec[1, b, k], bv.bvec[2, b, k], bv.bvec[3, b, k]
             for n in 1:nw
-                imln = imag(log(Mrot[n, n, b, k]))
+                imln = _guided_imln(Mrot[n, n, b, k], guides, n, bx, by, bz)
                 f = invNk * w * imln
                 rk[1, n, k] -= f * bx
                 rk[2, n, k] -= f * by
@@ -71,7 +82,7 @@ function compute_spread(Mrot::Array{ComplexF64,4}, bv::BVectors)
                 mnn = Mrot[n, n, b, k]
                 a2 = abs2(mnn)
                 sdiag += a2
-                imln = imag(log(mnn))
+                imln = _guided_imln(mnn, guides, n, bx, by, bz)
                 r2k[n, k] += invNk * w * ((1.0 - a2) + imln^2)
                 q = -imln - (bx * r[1, n] + by * r[2, n] + bz * r[3, n])
                 ΩDk[k] += invNk * w * q^2

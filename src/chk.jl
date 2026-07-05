@@ -169,7 +169,7 @@ function Checkpoint(model::Model, win::WinInput, result::WannierResult)
                          froz_max=(win.dis_froz_max == -Inf ? nothing : win.dis_froz_max))
         lwindow = falses(nb, nk) |> Matrix{Bool}
         for k in 1:nk, i in 1:wd.ndimwin[k]
-            lwindow[wd.nfirstwin[k]+i-1, k] = true
+            lwindow[wd.winbands[k][i], k] = true
         end
         ndimwin = copy(wd.ndimwin)
         uopt = zeros(ComplexF64, nb, nw, nk)

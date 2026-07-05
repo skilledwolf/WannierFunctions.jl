@@ -20,7 +20,12 @@ struct WindowData
     indxnfroz::Vector{Vector{Int}}  # window-local indices of non-frozen bands, per k
     lfrozen::Vector{Vector{Bool}}   # frozen mask (length ndimwin), per k
     frozen::Bool                    # any frozen states anywhere
+    winbands::Vector{Vector{Int}}   # absolute band indices in the window, per k (length ndimwin)
 end
+# Contiguous-window compat constructor: winbands = nfirstwin : nfirstwin+ndimwin-1
+WindowData(nfirstwin, ndimwin, ndimfroz, indxfroz, indxnfroz, lfrozen, frozen) =
+    WindowData(nfirstwin, ndimwin, ndimfroz, indxfroz, indxnfroz, lfrozen, frozen,
+               [collect(nfirstwin[k]:nfirstwin[k]+ndimwin[k]-1) for k in 1:length(nfirstwin)])
 
 """
     dis_windows(eig, num_wann; win_min=-Inf, win_max=Inf, froz_min=-Inf, froz_max=nothing)
@@ -32,21 +37,33 @@ ascending.
 """
 function dis_windows(eig::Matrix{Float64}, num_wann::Int;
                      win_min::Float64=-Inf, win_max::Float64=Inf,
-                     froz_min::Float64=-Inf, froz_max::Union{Nothing,Float64}=nothing)
+                     froz_min::Float64=-Inf, froz_max::Union{Nothing,Float64}=nothing,
+                     spheres::Union{Nothing,Vector{<:Tuple}}=nothing,
+                     kfrac::Union{Nothing,Vector}=nothing,
+                     recip::Union{Nothing,AbstractMatrix}=nothing,
+                     sphere_first_wann::Int=1)
     nb, nk = size(eig)
     frozen = froz_max !== nothing
     nfirstwin = zeros(Int, nk); ndimwin = zeros(Int, nk); ndimfroz = zeros(Int, nk)
     indxfroz = [Int[] for _ in 1:nk]
     indxnfroz = [Int[] for _ in 1:nk]
     lfrozen = [Bool[] for _ in 1:nk]
+    winbands = [Int[] for _ in 1:nk]
     for k in 1:nk
         e = @view eig[:, k]
         imin = findfirst(i -> e[i] >= win_min && e[i] <= win_max, 1:nb)
         imax = findlast(i -> e[i] <= win_max && e[i] >= win_min, 1:nb)
         (imin === nothing || imax === nothing) && error("empty outer window at k=$k")
+        # dis_spheres: outside every sphere, replace the window with the fixed absolute band
+        # range [first_wann, first_wann+num_wann-1] (no disentanglement freedom).
+        if spheres !== nothing && !_in_any_sphere(kfrac[k], spheres, recip)
+            imin = sphere_first_wann
+            imax = sphere_first_wann + num_wann - 1
+        end
         nd = imax - imin + 1
         nd >= num_wann || error("ndimwin ($nd) < num_wann ($num_wann) at k=$k")
         nfirstwin[k] = imin; ndimwin[k] = nd
+        winbands[k] = collect(imin:imax)
         lf = falses(nd)
         if frozen
             for i in imin:imax
@@ -60,7 +77,74 @@ function dis_windows(eig::Matrix{Float64}, num_wann::Int;
         indxnfroz[k] = findall(.!lf)
         lfrozen[k] = lf
     end
-    return WindowData(nfirstwin, ndimwin, ndimfroz, indxfroz, indxnfroz, lfrozen, frozen)
+    return WindowData(nfirstwin, ndimwin, ndimfroz, indxfroz, indxnfroz, lfrozen, frozen, winbands)
+end
+
+"""
+    dis_windows_proj(eig, A, num_wann; win_min, win_max, froz_min=-Inf, froz_max=nothing,
+                     proj_min, proj_max) -> WindowData
+
+PDWF (projectability-disentangled) window selection (Qiao–Pizzi–Marzari 2023): partition the
+bands inside the outer energy window by projectability `p_nk = Σ_w |A_nw(k)|²`. States with
+`p ≥ proj_max` (or in the energy frozen window, if given) are frozen; `proj_min ≤ p < proj_max`
+are the disentanglement pool; `p < proj_min` are discarded from the window entirely (so the
+window is generally non-contiguous). Expects (quasi-)orthonormal `.amn` columns (0 ≤ p ≤ 1).
+"""
+function dis_windows_proj(eig::Matrix{Float64}, A::Array{ComplexF64,3}, num_wann::Int;
+                          win_min::Float64=-Inf, win_max::Float64=Inf,
+                          froz_min::Float64=-Inf, froz_max::Union{Nothing,Float64}=nothing,
+                          proj_min::Float64=0.0, proj_max::Float64=1.0)
+    nb, nk = size(eig)
+    frozen = froz_max !== nothing
+    nfirstwin = zeros(Int, nk); ndimwin = zeros(Int, nk); ndimfroz = zeros(Int, nk)
+    indxfroz = [Int[] for _ in 1:nk]
+    indxnfroz = [Int[] for _ in 1:nk]
+    lfrozen = [Bool[] for _ in 1:nk]
+    winbands = [Int[] for _ in 1:nk]
+    for k in 1:nk
+        e = @view eig[:, k]
+        bands = Int[]; lf = Bool[]
+        for i in 1:nb
+            (e[i] < win_min || e[i] > win_max) && continue          # discard: outside energy win
+            p = sum(abs2(A[i, w, k]) for w in 1:num_wann)
+            (p < -1e-8 || p > 1 + 1e-8) &&
+                error("dis_windows_proj: projectability $p ∉ [0,1] at band $i, k=$k — " *
+                      ".amn columns not orthonormal")
+            isfroz = p >= proj_max || (frozen && froz_min <= e[i] <= froz_max)
+            if isfroz
+                push!(bands, i); push!(lf, true)
+            elseif p >= proj_min                                    # disentangle pool
+                push!(bands, i); push!(lf, false)
+            end                                                     # else discard
+        end
+        nd = length(bands)
+        nd >= num_wann || error("PDWF ndimwin ($nd) < num_wann ($num_wann) at k=$k")
+        nf = count(lf)
+        nf <= num_wann || error("PDWF ndimfroz ($nf) > num_wann at k=$k")
+        nfirstwin[k] = isempty(bands) ? 1 : bands[1]
+        ndimwin[k] = nd
+        ndimfroz[k] = nf
+        winbands[k] = bands
+        lfrozen[k] = lf
+        indxfroz[k] = findall(lf)
+        indxnfroz[k] = findall(.!lf)
+    end
+    # PDWF freezes by projectability even with no energy frozen window; the frozen-locking
+    # path must run whenever ANY state is frozen anywhere.
+    any_frozen = frozen || any(>(0), ndimfroz)
+    return WindowData(nfirstwin, ndimwin, ndimfroz, indxfroz, indxnfroz, lfrozen, any_frozen, winbands)
+end
+
+"True iff fractional k is inside any (centre_frac, radius) sphere (2π reciprocal metric)."
+function _in_any_sphere(kf, spheres::Vector{<:Tuple}, recip::AbstractMatrix)
+    kfv = SVector{3,Float64}(kf...)
+    for (c, r) in spheres
+        df = kfv .- SVector{3,Float64}(c...)
+        dff = round.(df) .- df                     # nearest periodic image (anint(df) − df)
+        dk = recip * dff                           # Cartesian Å⁻¹ (recip columns = b_i, 2π)
+        dot(dk, dk) < r^2 && return true
+    end
+    return false
 end
 
 "Window-slim the eigenvalues, projections A, and overlaps M to window-local indices."
@@ -68,21 +152,22 @@ function slim_data(eig, A, M, kpb, wd::WindowData)
     nb, nk = size(eig)
     nntot = size(M, 3)
     num_wann = size(A, 2)
-    eigwin = [Float64[eig[wd.nfirstwin[k]+i-1, k] for i in 1:wd.ndimwin[k]] for k in 1:nk]
+    # winbands[k] holds the absolute band indices in the window (contiguous for the energy
+    # path, possibly non-contiguous for PDWF where mid-window low-projectability states are
+    # discarded); all window-local extraction goes through it.
+    wb = wd.winbands
+    eigwin = [Float64[eig[wb[k][i], k] for i in 1:wd.ndimwin[k]] for k in 1:nk]
     Awin = Vector{Matrix{ComplexF64}}(undef, nk)
     for k in 1:nk
-        f = wd.nfirstwin[k]
-        Awin[k] = ComplexF64[A[f+i-1, j, k] for i in 1:wd.ndimwin[k], j in 1:num_wann]
+        Awin[k] = ComplexF64[A[wb[k][i], j, k] for i in 1:wd.ndimwin[k], j in 1:num_wann]
     end
     # Mwin[k][nn] is ndimwin[k] × ndimwin[k2]
     Mwin = Vector{Vector{Matrix{ComplexF64}}}(undef, nk)
     for k in 1:nk
-        fk = wd.nfirstwin[k]
         Mwin[k] = Vector{Matrix{ComplexF64}}(undef, nntot)
         for nn in 1:nntot
             k2 = kpb[nn, k]
-            fk2 = wd.nfirstwin[k2]
-            Mwin[k][nn] = ComplexF64[M[fk+i-1, fk2+j-1, nn, k]
+            Mwin[k][nn] = ComplexF64[M[wb[k][i], wb[k2][j], nn, k]
                                      for i in 1:wd.ndimwin[k], j in 1:wd.ndimwin[k2]]
         end
     end
@@ -244,7 +329,9 @@ function disentangle(model::Model;
                      win_min::Float64=-Inf, win_max::Float64=Inf,
                      froz_min::Float64=-Inf, froz_max::Union{Nothing,Float64}=nothing,
                      num_iter::Int=200, mix_ratio::Float64=0.5,
-                     conv_tol::Float64=1e-10, conv_window::Int=3, verbose::Bool=false)
+                     conv_tol::Float64=1e-10, conv_window::Int=3, verbose::Bool=false,
+                     spheres::Union{Nothing,Vector{<:Tuple}}=nothing, sphere_first_wann::Int=1,
+                     froz_proj::Bool=false, proj_min::Float64=0.0, proj_max::Float64=1.0)
     model.eig !== nothing || error("disentanglement requires band energies (.eig)")
     nw = model.num_wann
     bv = model.bvectors
@@ -261,8 +348,17 @@ function disentangle(model::Model;
                   "order (matching the reference). Tiny inversions among degenerate bands are benign." maxlog=1
     end
 
-    wd = dis_windows(eig, nw; win_min=win_min, win_max=win_max,
-                     froz_min=froz_min, froz_max=froz_max)
+    wd = if froz_proj
+        dis_windows_proj(eig, model.A, nw; win_min=win_min, win_max=win_max,
+                         froz_min=froz_min, froz_max=froz_max,
+                         proj_min=proj_min, proj_max=proj_max)
+    else
+        dis_windows(eig, nw; win_min=win_min, win_max=win_max,
+                    froz_min=froz_min, froz_max=froz_max,
+                    spheres=spheres, kfrac=(spheres === nothing ? nothing : model.kgrid.frac),
+                    recip=(spheres === nothing ? nothing : model.lattice.B),
+                    sphere_first_wann=sphere_first_wann)
+    end
     eigwin, Awin, Mwin = slim_data(eig, model.A, model.M, kpb, wd)
     Uopt = dis_project(Awin, wd, nw)
 
@@ -365,9 +461,26 @@ end
 
 "Compat method: pull the windows and iteration controls from a parsed `.win`."
 function disentangle(model::Model, win::WinInput; kwargs...)
+    # dis_spheres block: `kx ky kz radius` rows (fractional k, radius Å⁻¹ 2π convention)
+    spheres = nothing
+    sphere_first_wann = _getint(win.raw, "dis_spheres_first_wann", 1)
+    if _getint(win.raw, "dis_spheres_num", 0) > 0 && haskey(win.blocks, "dis_spheres")
+        spheres = Tuple{SVector{3,Float64},Float64}[]
+        for ln in win.blocks["dis_spheres"]
+            t = split(ln)
+            length(t) >= 4 || continue
+            push!(spheres, (SVector{3,Float64}(parse_f64.(t[1:3])...), parse_f64(t[4])))
+        end
+    end
+    # PDWF: projectability frozen window
+    froz_proj = _getbool(win.raw, "dis_froz_proj", false)
+    proj_min = _getfloat(win.raw, "dis_proj_min", 0.0)
+    proj_max = _getfloat(win.raw, "dis_proj_max", 1.0)
     return disentangle(model;
         win_min=win.dis_win_min, win_max=win.dis_win_max,
         froz_min=win.dis_froz_min,
         froz_max=(win.dis_froz_max == -Inf ? nothing : win.dis_froz_max),
-        num_iter=win.dis_num_iter, mix_ratio=win.dis_mix_ratio, kwargs...)
+        num_iter=win.dis_num_iter, mix_ratio=win.dis_mix_ratio,
+        spheres=spheres, sphere_first_wann=sphere_first_wann,
+        froz_proj=froz_proj, proj_min=proj_min, proj_max=proj_max, kwargs...)
 end

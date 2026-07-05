@@ -97,6 +97,78 @@ function write_rmn(seedname::AbstractString, model::Model, Mrot::Array{ComplexF6
 end
 
 """
+    hr_diagonal(Hr, irvec, ndegen) -> Vector{Float64}
+
+The on-site Hamiltonian matrix elements ⟨0n|H|0n⟩ (eV) = real diagonal of H(R = 0) / ndegen.
+"""
+function hr_diagonal(Hr::Array{ComplexF64,3}, irvec::Vector{NTuple{3,Int}}, ndegen::Vector{Int})
+    ir0 = findfirst(==((0, 0, 0)), irvec)
+    ir0 === nothing && error("hr_diagonal: no R = 0 vector")
+    nw = size(Hr, 1)
+    return [real(Hr[i, i, ir0]) / ndegen[ir0] for i in 1:nw]
+end
+
+"""
+    write_hr_diag(io, Hr, irvec, ndegen)
+
+Write the postw90 `write_hr_diag` on-site Hamiltonian table (`⟨0n|H|0n⟩` in eV) to `io`
+(default `stdout`), matching the reference stdout format.
+"""
+function write_hr_diag(io::IO, Hr::Array{ComplexF64,3}, irvec::Vector{NTuple{3,Int}},
+                       ndegen::Vector{Int})
+    d = hr_diagonal(Hr, irvec, ndegen)
+    println(io)
+    println(io, " On-site Hamiltonian matrix elements")
+    println(io, "     n        <0n|H|0n> (eV)")
+    println(io, "   -------------------------")
+    for (i, v) in enumerate(d)
+        @printf(io, "   %3d     %12.6f\n", i, v)
+    end
+    println(io)
+    return d
+end
+write_hr_diag(Hr, irvec, ndegen) = write_hr_diag(stdout, Hr, irvec, ndegen)
+
+"Translate a Cartesian vector into the home unit cell [0,1)³ (reference utility_translate_home)."
+function translate_home(vec::AbstractVector, lattice::Lattice)
+    f = lattice.B * SVector{3,Float64}(vec...) ./ TWOPI      # Cartesian → fractional
+    fr = MVector{3,Float64}(f...)
+    for i in 1:3
+        fr[i] < 0.0 && (fr[i] += ceil(abs(fr[i])))
+        fr[i] > 1.0 && (fr[i] -= trunc(fr[i]))
+    end
+    return lattice.A * SVector(fr)
+end
+
+"""
+    write_xyz(path, centres, atoms_cart; translate_home_cell=false, lattice=nothing) -> path
+
+Write `seedname_centres.xyz`: Wannier centres as pseudo-atoms `X`, then the real atoms.
+`centres` is a 3×nw matrix (Å), `atoms_cart` a vector of `(symbol, position)` pairs (Å). With
+`translate_home_cell`, centres are rationalised into the home cell (needs `lattice`).
+"""
+function write_xyz(path::AbstractString, centres::AbstractMatrix,
+                   atoms_cart::Vector{<:Tuple{<:AbstractString,<:AbstractVector}};
+                   translate_home_cell::Bool=false, lattice::Union{Nothing,Lattice}=nothing)
+    nw = size(centres, 2)
+    wc = translate_home_cell ?
+         hcat([translate_home(centres[:, i], lattice) for i in 1:nw]...) : centres
+    _set_now!()
+    cdate, ctime = _w90_datetime()
+    open(path, "w") do io
+        @printf(io, "%6d\n", nw + length(atoms_cart))
+        println(io, " Wannier centres, written by WannierFunctions.jl on", cdate, " at ", ctime)
+        for i in 1:nw
+            @printf(io, "X      %14.8f   %14.8f   %14.8f\n", wc[1, i], wc[2, i], wc[3, i])
+        end
+        for (sym, p) in atoms_cart
+            @printf(io, "%-2s     %14.8f   %14.8f   %14.8f\n", sym, p[1], p[2], p[3])
+        end
+    end
+    return path
+end
+
+"""
     write_bxsf(seedname, lattice, Hr, irvec, ndegen; fermi_energy=0.0, num_points=50) -> path
 
 Write `seedname.bxsf` (XCrySDen Fermi-surface grid): all interpolated bands on the inclusive
@@ -152,6 +224,63 @@ function write_bxsf(seedname::AbstractString, lattice::Lattice, Hr::Array{Comple
         println(io, "  END_BLOCK_BANDGRID_3D")
     end
     return seedname * ".bxsf"
+end
+
+"""
+    tabulate_3d(bm; mesh, colour=nothing) -> (energies, colours)
+
+Tabulate interpolated band energies on a regular (Γ-inclusive, no boundary doubling) 3-D grid
+`k = ((i1-1)/n1, (i2-1)/n2, (i3-1)/n3)`. `energies` is `nband × n1 × n2 × n3`. If `colour` is a
+function `(bm, kf, E, U) -> Vector{Float64}` (one scalar per band), its values are tabulated in
+the same layout and returned as `colours` (else `nothing`). Useful for FermiSurfer surfaces
+coloured by velocity, spin, or Berry curvature.
+"""
+function tabulate_3d(bm::BerryModel; mesh::NTuple{3,Int}, colour=nothing)
+    nw = num_wann(bm)
+    n1, n2, n3 = mesh
+    E = Array{Float64,4}(undef, nw, n1, n2, n3)
+    C = colour === nothing ? nothing : Array{Float64,4}(undef, nw, n1, n2, n3)
+    kl = [(i1, i2, i3) for i1 in 1:n1 for i2 in 1:n2 for i3 in 1:n3]
+    Threads.@threads for idx in 1:length(kl)
+        i1, i2, i3 = kl[idx]
+        kf = SVector((i1 - 1) / n1, (i2 - 1) / n2, (i3 - 1) / n3)
+        Ek, _, U = eig_deleig_vec(bm, kf; deriv=false)
+        E[:, i1, i2, i3] = Ek
+        colour !== nothing && (C[:, i1, i2, i3] = colour(bm, kf, Ek, U))
+    end
+    return E, C
+end
+
+"""
+    write_frmsf(path, lattice, energies; fermi_energy=0.0, colours=nothing) -> path
+
+Write a FermiSurfer `.frmsf` file: grid dims, shift flag 1, band count, the three reciprocal
+vectors (Å⁻¹), then band-outer / i3-fastest energies (shifted by `fermi_energy` so the surface
+lands at 0), and optionally a colour block in the same order. `energies`/`colours` are the
+`nband × n1 × n2 × n3` arrays from [`tabulate_3d`](@ref).
+"""
+function write_frmsf(path::AbstractString, lattice::Lattice, energies::Array{Float64,4};
+                     fermi_energy::Float64=0.0, colours::Union{Nothing,Array{Float64,4}}=nothing)
+    nb, n1, n2, n3 = size(energies)
+    B = lattice.B
+    open(path, "w") do io
+        @printf(io, "%d %d %d\n", n1, n2, n3)
+        println(io, "1")
+        @printf(io, "%d\n", nb)
+        for i in 1:3
+            @printf(io, "  %14.8f  %14.8f  %14.8f\n", B[1, i], B[2, i], B[3, i])
+        end
+        # band outer, i3 fastest
+        for b in 1:nb, i1 in 1:n1, i2 in 1:n2, i3 in 1:n3
+            @printf(io, "%15.8e\n", energies[b, i1, i2, i3] - fermi_energy)
+        end
+        if colours !== nothing
+            for b in 1:nb, i1 in 1:n1, i2 in 1:n2, i3 in 1:n3
+                @printf(io, "%15.8e\n", colours[b, i1, i2, i3])
+            end
+        end
+    end
+    return path
 end
 
 """
