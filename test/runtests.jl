@@ -1321,3 +1321,26 @@ end
         @test_skip false
     end
 end
+
+@testset "injection current (vs WannierBerri)" begin
+    # Circular injection current on GaAs; anchors from WannierBerri's InjectionCurrent
+    # calculator on the SAME tight-binding model (12³ mesh, 0.1 eV Gaussian).
+    sc = joinpath(REFROOT, "testpostw90_gaas_sc_xyz")
+    if isfile(joinpath(sc, "gaas.chk.fmt.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = mktempdir()
+        for f in ("gaas.win", "gaas.eig")
+            cp(joinpath(sc, f), joinpath(tmp, f); follow_symlinks = true)
+        end
+        for f in ("gaas.chk.fmt", "gaas.mmn")
+            run(pipeline(`bunzip2 -kc $(joinpath(sc, f * ".bz2"))`, stdout = joinpath(tmp, f)))
+        end
+        bm = BerryModel(joinpath(tmp, "gaas"))
+        η = injection_current(bm; freqs = [1.0, 1.5, 2.0], fermi_energy = 7.7414,
+                              kmesh = (12, 12, 12), smr_width = 0.1)
+        @test η[2, 3, 1, 1] ≈ -8.218173e-8 rtol = 1e-4    # yzx at ω = 1.0
+        @test η[2, 3, 1, 2] ≈ -1.769306e-6 rtol = 1e-4    # yzx at ω = 1.5
+        @test η[1, 2, 3, 2] ≈ 5.237471e-7 rtol = 1e-4     # xyz at ω = 1.5
+    else
+        @test_skip false
+    end
+end
