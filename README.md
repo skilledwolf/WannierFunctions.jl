@@ -58,15 +58,18 @@ cells reproduce reference numbers exactly.
 The four reference cases are all FCC single-shell meshes, so the test suite additionally covers
 the multi-shell B1 weight solve on a synthetic tetragonal mesh (two shells, completeness to
 1e-16), the `use_ws_distance` grid invariant, k-path discontinuity handling, optimizer parity,
-and the operator-API invariants — **250 tests**, passing identically at 1 and 8 threads.
+and the operator-API invariants — **454 tests**, passing identically at 1 and 8 threads.
 
 **Checkpoint interchange works in both directions**: we read `wannier90.x`-written `.chk` files
 exactly, and `wannier90.x restart=plot` consumes ours — for the disentangled silicon case it
 reproduces its own band structure to 1e-6 eV from our checkpoint. The CLI writes `seedname.chk`
 after every run, so `postw90.x` can post-process our results directly.
 
-Not yet implemented: the Γ-only real-gauge minimiser, guiding-centre branch selection, spinors,
-WF plotting, and `postw90.x` post-processing — see the roadmap.
+Every wannier90/postw90 feature with a shipped (or self-generated) oracle is implemented and
+validated — including the Γ-only real-orthogonal minimiser, symmetry-adapted disentanglement,
+higher-order finite differences, the Stengel–Spaldin functional, and bulk ballistic transport.
+The one remaining reference feature out of scope is lead–conductor–lead transport
+(`tran_lcr`); see the roadmap.
 
 ## Installation
 
@@ -142,11 +145,15 @@ interface (pw2wannier90 etc.) — byte-identical to `wannier90.x -pp` output. Th
 `silicon_band.dat/.kpt/.labelinfo.dat` (`bands_plot`) — the same outputs, in the same formats, as
 `wannier90.x silicon`.
 
-**Γ-only calculations are supported** (silane, benzene validated): the half-stored b-vector set
-is expanded to the closed full set on load using M(−b) = M(b)†, so the general machinery is exact.
-One documented difference: we minimise over the full unitary group, while the reference Γ code
-restricts to real orthogonal gauges — our converged spread can come out marginally *lower*
-(benzene: 12.9583353 vs the reference's stationary 12.9583380; Ω_I identical to 3e-12).
+**Γ-only calculations run the reference's real-orthogonal algorithm** (`gamma_only`): Jacobi
+2×2 rotation sweeps on the weighted half-set overlaps (`wann_main_gamma`), giving exactly real
+gauges — real Wannier functions — including Γ-point disentanglement (the conjugation-closed
+optimal subspace is rotated to a real basis before the handoff). All four reference oracles
+match to every printed digit: benzene valence Ω = 12.958338012, valence+conduction (90 → 18,
+frozen window) 31.468492322, hexagonal cell 12.091929665, and a 30 → 10 Na chain
+37.505387845 (whose long cell exercises the guided branch-unwrapping in the centre
+bookkeeping). The model-level API can still minimise over the full unitary group instead
+(complex gauge, marginally lower Ω).
 
 **Spinor projections** (`spinors = .true.`): `-pp` writes the `spinor_projections` block —
 byte-identical to `wannier90.x -pp` on the Pt (SOC) test input.
@@ -229,24 +236,46 @@ the reference's advanced options, each validated gauge-invariantly against its o
 - **SLWF+C** (`slwf_num`/`slwf_constrain`/`slwf_lambda`/`slwf_centres`): selective localisation
   of a chosen WF subset with constrained centres — the objective Ω_C = Σ(spread + λ|r̄−c|²)
   reaches 1.634087566 vs the oracle's 1.634087565.
-- **Symmetry-adapted WFs** (`site_symmetry`, `.dmn`): the gauge is projected onto the
-  site-symmetry representation each iteration (star reconstruction + gradient/rotation
-  symmetrisation) — GaAs Ω = 10.136492662 with U symmetry-adapted to 2.9e-8. (Localisation
-  phase; the combined disentanglement+symmetry case is a documented extension.)
+- **Symmetry-adapted WFs** (`site_symmetry`, `.dmn`, `symmetrize_eps`): the gauge is projected
+  onto the site-symmetry representation each iteration (star reconstruction +
+  gradient/rotation symmetrisation) — GaAs Ω = 10.136492662 with U symmetry-adapted to 7e-12.
+  The combined **disentanglement + symmetry** case runs the reference's constrained Ω_I
+  optimiser (`dis_extract_symmetry`): the H3S benchmark's 10-iteration Ω_I trajectory matches
+  to every printed digit (final Ω_I = 3.408923571 exact; converged symmetric Ω = 6.301957278
+  vs a converged reference run's 6.301957261).
+- **Higher-order finite differences** (`higher_order_n`): Lihm's multiplied-shell b-vector
+  scheme (weights w·4/3, −w/12, …) across the wannieriser, the postw90 operators, and `-pp`
+  generation (nnkpts byte-identical to `wannier90.x -pp`). KNbO₃ spread components to
+  9 digits; the Fe morb and Pt SHC higher-order oracles exact.
+- **Stengel–Spaldin functional** (`use_ss_functional`): the single-point objective
+  Σ w_b(1−|M̄_nn(b)|²) on k-averaged overlaps with its 4-term gradient. The SS surface is a
+  near-flat valley (wannier90.x itself stops at criterion-dependent points), so validation is
+  by state functions: our objective matches w90's initial and converged values to 9–10 digits
+  and w90's converged point is stationary for our gradient.
+- **Ballistic transport** (`transport = true`, `transport_mode = bulk`): principal-layer
+  assembly from H(R), López-Sancho surface Green functions, Fisher–Lee T(E) + Green-function
+  DOS, and `_htB.dat`/`_qc.dat`/`_dos.dat` in the reference formats. Validated against a
+  self-generated wannier90.x run on tellurium (helical chains ∥ c): T(E) to 9e-7 over the
+  full energy scan and the assembled H00/H01 at file precision. (`tran_lcr` is out of scope.)
 
 **Symmetrised Brillouin-zone integration** (`read_sym`, `irreducible_kmesh`,
-`anomalous_hall_sym`): reduce a uniform mesh to its irreducible wedge under a `.sym` space
-group and symmetrise the result tensor (the Berry curvature as a pseudovector) — the wedge AHC
-reproduces the full-BZ AHC to 8e-6 while enforcing the symmetry-required zero components,
-the WannierBerri irreducible-BZ pattern.
+`anomalous_hall_sym`, `orbital_magnetisation_sym`, `density_of_states_sym`): reduce a uniform
+mesh to its irreducible wedge under a `.sym` space group and symmetrise the integrand (Berry
+curvature and the orbital-magnetisation integrand as pseudovectors, DOS as a scalar) — the
+WannierBerri irreducible-BZ pattern. Wedge AHC = full-BZ AHC to 8e-6; Fe morb to 2e-6 with
+78/512 k-points; DOS exact.
 
 **Circular injection current** (`injection_current`): the photogalvanic rate tensor
-η_abc(ω) (Lihm–Park / WannierBerri) — validated against WannierBerri to 6 significant digits on
-a shared tight-binding model (there is no Fortran reference).
+η_abc(ω) (Lihm–Park / WannierBerri) — cross-validated against WannierBerri on a shared
+tight-binding model (there is no Fortran reference); agreement at the 1e-4 level, limited by
+the two codes' degenerate-state regularisation conventions.
 
 **DFTK.jl bridge** (`wannier_model` + package extension): build a wannierisation model from
 in-memory overlaps/projections/eigenvalues, enabling an all-Julia DFT → Wannier pipeline with
-no file round-trip; the in-memory path is consistency-tested against the file path.
+no file round-trip and no external binaries — the b-vector list comes from the built-in kmesh
+search and the matrix elements from DFTK's plane-wave routines. Validated live on a silicon
+LDA SCF: Ω = 6.4566 Å², bond-centred WFs, interpolated bands reproducing the SCF eigenvalues
+to 2.5e-12 eV ([examples/06_dftk_end_to_end.jl](examples/06_dftk_end_to_end.jl)).
 
 **Tight-binding model input** (`tb_model`, `read_tb`): interpolate the entire post-processing
 stack — bands, DOS, AHC, Berry curvature, FermiSurfer plots — directly from a `_hr.dat` or
@@ -268,12 +297,15 @@ against `w90chk2chk.x` conversions.
 
 ## Roadmap
 
-- Symmetry-adapted WFs for the combined disentanglement+symmetry case (the reference's
-  `dis_extract_symmetry` constrained Ω_I optimiser); Γ-only real-orthogonal parity mode.
-- Broader symmetrised BZ integration (beyond AHC), recursive adaptive refinement for all
-  quantities, and shift/injection nonlinear responses on the irreducible wedge.
+- Lead–conductor–lead transport (`tran_lcr` with 2c2 auto-sorting) — the one reference
+  feature deliberately out of scope (no shipped oracle; the community has moved to dedicated
+  NEGF codes).
+- Nonlinear responses (shift/injection current) and the spin Hall conductivity on the
+  irreducible wedge; recursive adaptive refinement for all wedge quantities.
   See [`docs/reference-notes/parity-audit-2026.md`](docs/reference-notes/parity-audit-2026.md)
-  for the full triage.
+  for the full triage and
+  [`docs/reference-notes/remaining-gaps-2026-07.md`](docs/reference-notes/remaining-gaps-2026-07.md)
+  for the slate that closed the remaining gaps.
 
 ## Documentation
 

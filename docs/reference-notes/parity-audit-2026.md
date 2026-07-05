@@ -1,17 +1,26 @@
 # Parity audit (July 2026): WannierFunctions.jl vs the field
 
-> **Status update (2026-07-05, after slate 2 + 3 + 4).** Every source-verified
-> wannier90/postw90 gap with a shipped oracle is now **implemented and validated**: shift
-> current, kdotp, cube/`_r.dat`/`.bxsf`/`write_hr_diag`/`write_xyz`, PDWF, dis_spheres, guiding
-> centres + select_projections, preconditioned CG, tetrahedron-method SHC, **SLWF+C**, and
-> **symmetry-adapted WFs** (localisation phase — the combined disentanglement+symmetry
-> `dis_extract_symmetry` optimiser is the one documented remainder). The strategic ecosystem
-> items are now done and validated too: **TB-model input** + 3-D tabulation/FermiSurfer,
-> **irreducible-BZ symmetrisation** (self-validated vs full-BZ AHC), **circular injection
-> current** (validated to 6 digits vs WannierBerri 26.4.6 on a shared TB model), and the
-> **DFTK.jl bridge** (in-memory model, consistency-tested). Remaining wannier90 gaps: the SAWF
-> disentanglement optimiser, Stengel–Spaldin functional, ballistic transport (skip verdict).
-> The triage below is the original survey, kept for reference.
+> **Status update (2026-07-05, final slate — see `remaining-gaps-2026-07.md`).** Every
+> wannier90/postw90 feature with a shipped OR self-generated oracle is now **implemented and
+> validated**, closing the last four gaps of the previous update: **symmetry-adapted
+> disentanglement** (`dis_extract_symmetry`, H3S trajectory exact to every printed digit),
+> **higher-order finite differences** (`higher_order_n`; knbo3 + Fe morb + Pt SHC oracles,
+> `-pp` byte-identical), the **Stengel–Spaldin functional** (state-function parity — the SS
+> surface's stopping point is criterion-dependent even between wannier90.x runs), the
+> **Γ-only real-orthogonal algorithm** (`wann_main_gamma`; all four gamma oracles to every
+> printed digit, exactly real gauges, Γ-disentanglement via subspace realification), and
+> **bulk ballistic transport** (Fisher–Lee/López-Sancho; oracle self-generated with
+> wannier90.x on Te since none is shipped — and the upstream v4-dev `tran_read_ht` input path
+> segfaults). The symmetrised wedge now also covers **morb + DOS**, and the **DFTK bridge is
+> validated live** (silicon SCF → bond-centred WFs, Ω = 6.4566 Å², mesh bands to 2.5e-12 eV).
+> The one deliberate exclusion remaining: `tran_lcr`. The earlier update text and the
+> original triage below are kept for reference.
+>
+> *(Previous update, superseded)* Slate 2+3+4 had delivered shift current, kdotp,
+> cube/`_r.dat`/`.bxsf`/`write_hr_diag`/`write_xyz`, PDWF, dis_spheres, guiding centres +
+> select_projections, preconditioned CG, tetrahedron-method SHC, SLWF+C, symmetry-adapted WFs
+> (localisation phase), TB-model input + FermiSurfer, irreducible-BZ AHC, injection current
+> (vs WannierBerri), and the in-memory DFTK bridge.
 
 Triaged gap list against three sources, surveyed 2026-07-04:
 
