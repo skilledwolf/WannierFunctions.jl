@@ -1232,3 +1232,55 @@ end
         @test_skip false
     end
 end
+
+@testset "symmetry: BZ reduction + irreducible AHC" begin
+    # k-mesh reduction: eigenvalue multiset on the irreducible wedge must reproduce the full mesh
+    gs = joinpath(REFROOT, "testw90_example21_As_sp")
+    if isfile(joinpath(gs, "GaAs.sym"))
+        m = read_model(joinpath(gs, "GaAs")); w = read_win(joinpath(gs, "GaAs.win"))
+        r = run_wannier(m, w)
+        irvec, ndeg = wigner_seitz(m.lattice, m.kgrid.mp_grid)
+        Hr, _ = build_hr(r.U, r.eig_interp, m.kgrid, irvec)
+        bm = BerryModel(m.lattice, irvec, ndeg, Hr)
+        sym = read_sym(joinpath(gs, "GaAs.sym"))
+        @test nsym(sym) == 24
+        reps, wts, _ = irreducible_kmesh((6, 6, 6), sym; kaction = :cart, lattice = m.lattice)
+        @test sum(wts) == 216
+        full = Float64[]
+        for i in 0:5, j in 0:5, k in 0:5
+            E, _ = eig_deleig(bm, [i / 6, j / 6, k / 6]; deriv = false); append!(full, E)
+        end
+        irr = Float64[]
+        for (ki, kf) in enumerate(reps)
+            E, _ = eig_deleig(bm, kf; deriv = false)
+            for _ in 1:wts[ki], e in E
+                push!(irr, e)
+            end
+        end
+        @test maximum(abs.(sort(irr) .- sort(full))) < 1e-6   # exact multiset match
+    else
+        @test_skip false
+    end
+
+    # irreducible-wedge symmetrised AHC == full-BZ AHC (Fe; magnetic subgroup filtered from Oₕ)
+    fe = joinpath(REFROOT, "testpostw90_fe_ahc")
+    if isfile(joinpath(fe, "Fe.chk.fmt.bz2")) && Sys.which("bunzip2") !== nothing
+        tmp = mktempdir()
+        for f in ("Fe.win", "Fe.eig")
+            cp(joinpath(fe, f), joinpath(tmp, f); follow_symlinks = true)
+        end
+        for f in ("Fe.chk.fmt", "Fe.mmn")
+            run(pipeline(`bunzip2 -kc $(joinpath(fe, f * ".bz2"))`, stdout = joinpath(tmp, f)))
+        end
+        bm = BerryModel(joinpath(tmp, "Fe"))
+        Ef = 12.6279
+        full = anomalous_hall(bm; fermi_energy = Ef, kmesh = (10, 10, 10))
+        mg = WannierFunctions._pseudovector_subgroup(bm, cubic_point_group(), (10, 10, 10), Ef; tol = 1e-4)
+        @test nsym(mg) >= 1
+        sym_ahc, (nirr, nfull) = anomalous_hall_sym(bm, mg; fermi_energy = Ef, kmesh = (10, 10, 10))
+        @test nirr < nfull                                      # genuine reduction
+        @test maximum(abs.(collect(sym_ahc) .- collect(full))) < 1e-3   # matches full-BZ
+    else
+        @test_skip false
+    end
+end
