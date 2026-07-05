@@ -1,14 +1,17 @@
 # Parity audit (July 2026): WannierFunctions.jl vs the field
 
-> **Status update (2026-07-04, after slate 2 + 3).** Everything in §1 (source-verified
-> wannier90/postw90 gaps) marked *do-now* or *do-later* with a shipped oracle test is now
-> **implemented and oracle-validated**, plus several *do-later* items: shift current, kdotp,
-> cube/`_r.dat`/`.bxsf`/`write_hr_diag`/`write_xyz`, PDWF, dis_spheres, guiding centres +
-> select_projections, preconditioned CG, TB-model input (+ 3-D tabulation/FermiSurfer), and
-> **tetrahedron-method SHC**. The remaining wannier90 gaps are SLWF+C, symmetry-adapted WFs
-> (`sitesym`/`.dmn`), the Stengel–Spaldin functional, and ballistic transport (skip). The
-> strategic ecosystem items (DFTK bridge, irreducible-BZ symmetrisation, injection current)
-> are unstarted by design. The triage below is the original survey, kept for reference.
+> **Status update (2026-07-05, after slate 2 + 3 + 4).** Every source-verified
+> wannier90/postw90 gap with a shipped oracle is now **implemented and validated**: shift
+> current, kdotp, cube/`_r.dat`/`.bxsf`/`write_hr_diag`/`write_xyz`, PDWF, dis_spheres, guiding
+> centres + select_projections, preconditioned CG, tetrahedron-method SHC, **SLWF+C**, and
+> **symmetry-adapted WFs** (localisation phase — the combined disentanglement+symmetry
+> `dis_extract_symmetry` optimiser is the one documented remainder). The strategic ecosystem
+> items are now done and validated too: **TB-model input** + 3-D tabulation/FermiSurfer,
+> **irreducible-BZ symmetrisation** (self-validated vs full-BZ AHC), **circular injection
+> current** (validated to 6 digits vs WannierBerri 26.4.6 on a shared TB model), and the
+> **DFTK.jl bridge** (in-memory model, consistency-tested). Remaining wannier90 gaps: the SAWF
+> disentanglement optimiser, Stengel–Spaldin functional, ballistic transport (skip verdict).
+> The triage below is the original survey, kept for reference.
 
 Triaged gap list against three sources, surveyed 2026-07-04:
 

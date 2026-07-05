@@ -226,6 +226,27 @@ the reference's advanced options, each validated gauge-invariantly against its o
   silicon Ω = 22.7385 Bohr².
 - **Preconditioned CG** (`precond`): real-space Lorentzian gradient filter — GaAs reaches the
   same 4.466880976 minimum.
+- **SLWF+C** (`slwf_num`/`slwf_constrain`/`slwf_lambda`/`slwf_centres`): selective localisation
+  of a chosen WF subset with constrained centres — the objective Ω_C = Σ(spread + λ|r̄−c|²)
+  reaches 1.634087566 vs the oracle's 1.634087565.
+- **Symmetry-adapted WFs** (`site_symmetry`, `.dmn`): the gauge is projected onto the
+  site-symmetry representation each iteration (star reconstruction + gradient/rotation
+  symmetrisation) — GaAs Ω = 10.136492662 with U symmetry-adapted to 2.9e-8. (Localisation
+  phase; the combined disentanglement+symmetry case is a documented extension.)
+
+**Symmetrised Brillouin-zone integration** (`read_sym`, `irreducible_kmesh`,
+`anomalous_hall_sym`): reduce a uniform mesh to its irreducible wedge under a `.sym` space
+group and symmetrise the result tensor (the Berry curvature as a pseudovector) — the wedge AHC
+reproduces the full-BZ AHC to 8e-6 while enforcing the symmetry-required zero components,
+the WannierBerri irreducible-BZ pattern.
+
+**Circular injection current** (`injection_current`): the photogalvanic rate tensor
+η_abc(ω) (Lihm–Park / WannierBerri) — validated against WannierBerri to 6 significant digits on
+a shared tight-binding model (there is no Fortran reference).
+
+**DFTK.jl bridge** (`wannier_model` + package extension): build a wannierisation model from
+in-memory overlaps/projections/eigenvalues, enabling an all-Julia DFT → Wannier pipeline with
+no file round-trip; the in-memory path is consistency-tested against the file path.
 
 **Tight-binding model input** (`tb_model`, `read_tb`): interpolate the entire post-processing
 stack — bands, DOS, AHC, Berry curvature, FermiSurfer plots — directly from a `_hr.dat` or
@@ -247,10 +268,10 @@ against `w90chk2chk.x` conversions.
 
 ## Roadmap
 
-- SLWF+C selective localisation and symmetry-adapted WFs (`sitesym`/`.dmn`); Γ-only
-  real-orthogonal parity mode.
-- Ecosystem differentiators: a DFTK.jl in-memory bridge, irreducible-BZ sampling with tensor
-  symmetrisation (WannierBerri-style), injection current.
+- Symmetry-adapted WFs for the combined disentanglement+symmetry case (the reference's
+  `dis_extract_symmetry` constrained Ω_I optimiser); Γ-only real-orthogonal parity mode.
+- Broader symmetrised BZ integration (beyond AHC), recursive adaptive refinement for all
+  quantities, and shift/injection nonlinear responses on the irreducible wedge.
   See [`docs/reference-notes/parity-audit-2026.md`](docs/reference-notes/parity-audit-2026.md)
   for the full triage.
 
