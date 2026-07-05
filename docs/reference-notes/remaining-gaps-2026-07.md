@@ -114,3 +114,28 @@ slate. Conventions and oracle anchors for each feature.
 The WannierBerri cross-check (regenerated on the current reference data) agrees at the
 ~1e-4 level, limited by the two codes' degenerate-state regularisation on GaAs's exact band
 degeneracies — tolerances set to rtol 3e-4 accordingly (largest component agrees at 5.8e-5).
+
+## 8. postw90.jl drop-in binary (added after the slate)
+
+- [bin/postw90.jl](../../bin/postw90.jl) → `postw90_main(seedname)` in [src/postw90.jl](../../src/postw90.jl): keyword → kwargs
+  mapping for every module (berry ahc/morb/kubo/sc/shc/kdotp, gyrotropic, dos, kpath, kslice,
+  geninterp, boltzwann, spin_moment), reference-named output files.
+- New writers: `-kubo_S_ab/-kubo_A_ab/-jdos` (3E16.8/2E16.8), `-ahc/-morb-fermiscan`
+  (4(F12.6,1x)), the BoltzWann set `_tdf/_elcond/_sigmas/_seebeck/_kappa/_boltzdos`
+  (G18.10 rows, exact headers; Seebeck is the full 3×3 in ROW-major order), geninterp rows
+  in `(I10,4G18.10)`.
+- `fortran_g(x, w, d)`: Gw.d emulation — F(w−4).(d−n) + 4 blanks in the F-range, Ew.d
+  otherwise (needed for byte parity of geninterp/BoltzWann).
+- Keyword conventions discovered: the reference matches `berry_task`/`gyrotropic_task` by
+  SUBSTRING (`eval_shc` → shc; glued `-C-dos-D0` works); task lists split on `+`; the global
+  interpolation mesh keyword is `kmesh` (module-specific `*_kmesh` override); the BoltzWann
+  TDF energy window is the DISENTANGLEMENT window ±0.2 eV; `kubo_eigval_max` defaults to
+  dis_froz_max + 2/3 (else max eig + 2/3); boltz_dos energy range defaults to eig bounds
+  ±0.6667.
+- Validation: byte-identical vs local postw90.x runs on Fe kubo (4 files), Si geninterp,
+  Si BoltzWann (elcond/sigmas/seebeck/kappa/boltzdos identical; tdf ≤1e-4-relative at 4
+  band-crossing energies — degenerate-velocity convention), Cu dos, Fe kpath bands+curv,
+  Fe kslice (3 files), Pt shc-fermiscan, Te gyrotropic (6 files), GaAs kdotp, Fe
+  ahc-fermiscan. Oracle pairs committed under test/data/postw90.
+- [bin/w90chk2chk.jl](../../bin/w90chk2chk.jl): `-export`/`-import` checkpoint conversion (data-exact; header
+  date restamped).

@@ -103,18 +103,15 @@ function geninterp(bm::BerryModel, seedname::AbstractString; alsofirstder::Bool=
         else
             println(io, "#  Kpt_idx  K_x (1/ang)       K_y (1/ang)        K_z (1/ang)       Energy (eV)")
         end
+        # rows in the reference '(I10,4G18.10)' / '(I10,7G18.10)' formats (geninterp.F90:411)
+        g(x) = fortran_g(x, 18, 10)
         for (i, kf) in enumerate(kpts)
             E, dE = eig_deleig(bm, kf; deriv=alsofirstder)
             kcart = bm.lattice.B * kf
             for n in 1:length(E)
-                @printf(io, "%10d  ", idx[i])
-                @printf(io, "%.10g      %.10g      %.10g      ", kcart[1], kcart[2], kcart[3])
-                if alsofirstder
-                    @printf(io, "%.10g      %.10g      %.10g      %.10g    \n",
-                            E[n], dE[1, n], dE[2, n], dE[3, n])
-                else
-                    @printf(io, "%.10g    \n", E[n])
-                end
+                print(io, lpad(idx[i], 10), g(kcart[1]), g(kcart[2]), g(kcart[3]), g(E[n]))
+                alsofirstder && print(io, g(dE[1, n]), g(dE[2, n]), g(dE[3, n]))
+                println(io)
             end
         end
     end

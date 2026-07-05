@@ -130,11 +130,13 @@ k-loops are threaded (gated by problem size, so small systems don't pay scheduli
 start Julia with `julia -t auto` for dense interpolation workloads. `benchmark/run.jl` has the
 numbers.
 
-### Command line (drop-in for `wannier90.x`)
+### Command line (drop-in for `wannier90.x`, `postw90.x`, `w90chk2chk.x`)
 
 ```bash
 julia --project=/path/to/wannier90_greenfield bin/wannier90.jl -pp silicon   # setup: writes silicon.nnkp
 julia --project=/path/to/wannier90_greenfield bin/wannier90.jl silicon       # full run
+julia --project=/path/to/wannier90_greenfield bin/postw90.jl silicon         # post-processing
+julia --project=/path/to/wannier90_greenfield bin/w90chk2chk.jl -export silicon  # chk → chk.fmt
 ```
 
 `-pp` generates the k-mesh from `silicon.win` alone and writes `silicon.nnkp` for the DFT
@@ -144,6 +146,17 @@ interface (pw2wannier90 etc.) — byte-identical to `wannier90.x -pp` output. Th
 `silicon_tb.dat` with real position-operator blocks (`write_tb`), and the band files
 `silicon_band.dat/.kpt/.labelinfo.dat` (`bands_plot`) — the same outputs, in the same formats, as
 `wannier90.x silicon`.
+
+**`bin/postw90.jl` is a drop-in `postw90.x`**: it reads the postw90 keywords from the `.win`
+plus `seedname.chk(.fmt)` and companions, dispatches every requested module — `berry_task`
+ahc/morb/kubo/sc/shc/kdotp, `gyrotropic`, `dos`, `kpath`, `kslice`, `geninterp`, `boltzwann`,
+`spin_moment` — and writes the reference-named output files in the reference formats
+(including Fortran `G18.10` for geninterp/BoltzWann). Validated byte-identical against local
+`postw90.x` runs across all task families: kubo_S/kubo_A/jdos, dos, kpath bands+curv, kslice,
+shc-fermiscan, all six gyrotropic files, kdotp, ahc-fermiscan, geninterp, and the six
+BoltzWann files (the TDF shows ≤1e-4-relative deviations at four isolated band-crossing
+energies from degenerate-velocity conventions; everything else is identical to the last
+printed digit). `bin/w90chk2chk.jl` converts checkpoints both ways.
 
 **Γ-only calculations run the reference's real-orthogonal algorithm** (`gamma_only`): Jacobi
 2×2 rotation sweeps on the weighted half-set overlaps (`wann_main_gamma`), giving exactly real

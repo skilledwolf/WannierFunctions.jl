@@ -22,6 +22,8 @@ Each script prints its result next to the corresponding reference Wannier90 benc
 you can see the agreement directly.
 
 | `05_berry_ahc.jl` | bcc Fe, 18 WF (SOC) | **Berry curvature + anomalous Hall conductivity** from a finished run's checkpoint; reproduces `postw90.x` digit-for-digit. |
+| `06_dftk_end_to_end.jl` | silicon, 4 → 4 WF | **All-Julia DFT → Wannier** pipeline: a DFTK SCF handed to the wannieriser in memory (no files, no binaries); needs `] add DFTK`. |
+| `07_dftk_scdm_minimal.jl` | silicon, 4 → 4 WF | The **minimal-input workflow**: DFTK + **SCDM** automatic projections — `num_wann` is the only Wannier-specific input; needs `] add DFTK`. |
 
 ## Command-line equivalent
 
