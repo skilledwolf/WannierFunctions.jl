@@ -35,4 +35,12 @@ let
         maxdev = max(maxdev, maximum(abs.(E .- wmodel.eig[:, ik])))
     end
     @test maxdev < 1e-8
+
+    # SCDM (projection-free) path: num_wann is the only Wannier-specific input, and it must
+    # reach the identical maximally-localised gauge.
+    wmodel2 = wannier_model(scfres; num_wann = 4)
+    res2 = wannierise(wmodel2; num_iter = 500, algorithm = :w90, conv_tol = 1e-10,
+                      conv_window = 5)
+    @test res2.converged
+    @test res2.spread.Ω ≈ res.spread.Ω atol = 1e-6
 end

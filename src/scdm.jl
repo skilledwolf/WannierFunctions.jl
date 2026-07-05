@@ -31,27 +31,51 @@ The pivot points are chosen at the k-point closest to Γ (the k-list must contai
 function scdm_projections(model::Model; dir::AbstractString=".",
                           mode::Symbol=:isolated, mu::Float64=0.0, sigma::Float64=1.0)
     nb, nw, nk = model.num_bands, model.num_wann, nkpt(model.kgrid)
+    ng0, _, _ = read_unk(joinpath(dir, @sprintf("UNK%05d.%1d", 1, 1)))
+    getu = function (k)
+        ngk, ikk, u = read_unk(joinpath(dir, @sprintf("UNK%05d.%1d", k, 1)))
+        (ngk == ng0 && ikk == k) || error("UNK file $k: header mismatch")
+        size(u, 2) >= nb || error("UNK has $(size(u, 2)) bands, model needs $nb")
+        u
+    end
+    return scdm_amn(getu, ng0, model.kgrid.frac, nb, nw;
+                    eig=model.eig, mode=mode, mu=mu, sigma=sigma)
+end
+
+"""
+    scdm_amn(getu, ng, kfrac, num_bands, num_wann;
+             eig=nothing, mode=:isolated, mu=0.0, sigma=1.0) -> A
+
+Array-level SCDM core: `getu(k)` returns the periodic parts `u_mk(r)` on the `ng` real-space
+grid as an `(npts × ≥num_bands)` matrix with x fastest (the UNK layout; `vec` of an
+`ng₁×ng₂×ng₃` array). Used by [`scdm_projections`](@ref) (UNK files) and by the DFTK
+extension (in-memory wavefunctions).
+"""
+function scdm_amn(getu::Function, ng::NTuple{3,Int}, kfrac::AbstractVector,
+                  num_bands::Int, num_wann::Int;
+                  eig::Union{Nothing,Matrix{Float64}}=nothing,
+                  mode::Symbol=:isolated, mu::Float64=0.0, sigma::Float64=1.0)
+    nb, nw, nk = num_bands, num_wann, length(kfrac)
 
     f = if mode === :isolated
         (m, k) -> 1.0
     elseif mode === :erfc
-        model.eig !== nothing || error("scdm :erfc needs band energies (.eig)")
-        (m, k) -> 0.5 * erfc_((model.eig[m, k] - mu) / sigma)
+        eig !== nothing || error("scdm :erfc needs band energies")
+        (m, k) -> 0.5 * erfc_((eig[m, k] - mu) / sigma)
     elseif mode === :gaussian
-        model.eig !== nothing || error("scdm :gaussian needs band energies (.eig)")
-        (m, k) -> exp(-((model.eig[m, k] - mu) / sigma)^2)
+        eig !== nothing || error("scdm :gaussian needs band energies")
+        (m, k) -> exp(-((eig[m, k] - mu) / sigma)^2)
     else
         error("scdm mode $mode (expected :isolated, :erfc, or :gaussian)")
     end
 
     # Anchor k-point: closest to Γ.
-    kΓ = argmin([sum(abs2, k) for k in model.kgrid.frac])
-    sum(abs2, model.kgrid.frac[kΓ]) < 1e-8 ||
-        @warn "no Γ point in the k-list; using the closest k for SCDM pivots" k = model.kgrid.frac[kΓ]
+    kΓ = argmin([sum(abs2, k) for k in kfrac])
+    sum(abs2, kfrac[kΓ]) < 1e-8 ||
+        @warn "no Γ point in the k-list; using the closest k for SCDM pivots" k = kfrac[kΓ]
 
-    ng, ik, uΓ = read_unk(joinpath(dir, @sprintf("UNK%05d.%1d", kΓ, 1)))
+    uΓ = getu(kΓ)
     npts = prod(ng)
-    size(uΓ, 2) >= nb || error("UNK has $(size(uΓ, 2)) bands, model needs $nb")
 
     # Column-pivoted QR on W[m, r] = f(ε_mΓ) ψ*_m(r). At Γ, ψ = u.
     W = Matrix{ComplexF64}(undef, nb, npts)
@@ -73,9 +97,8 @@ function scdm_projections(model::Model; dir::AbstractString=".",
 
     A = Array{ComplexF64,3}(undef, nb, nw, nk)
     for k in 1:nk
-        ngk, ikk, u = read_unk(joinpath(dir, @sprintf("UNK%05d.%1d", k, 1)))
-        (ngk == ng && ikk == k) || error("UNK file $k: header mismatch")
-        kf = model.kgrid.frac[k]
+        u = getu(k)
+        kf = kfrac[k]
         for (n, p) in enumerate(piv)
             phase = cis(-TWOPI * (kf[1] * rfrac[n][1] + kf[2] * rfrac[n][2] + kf[3] * rfrac[n][3]))
             for m in 1:nb

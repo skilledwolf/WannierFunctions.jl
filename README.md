@@ -273,9 +273,12 @@ the two codes' degenerate-state regularisation conventions.
 **DFTK.jl bridge** (`wannier_model` + package extension): build a wannierisation model from
 in-memory overlaps/projections/eigenvalues, enabling an all-Julia DFT → Wannier pipeline with
 no file round-trip and no external binaries — the b-vector list comes from the built-in kmesh
-search and the matrix elements from DFTK's plane-wave routines. Validated live on a silicon
+search and the matrix elements from DFTK's plane-wave routines. Two entry points:
+`wannier_model(scfres, projections; num_wann)` with explicit trial orbitals, and the
+projection-free `wannier_model(scfres; num_wann)` using SCDM. Validated live on a silicon
 LDA SCF: Ω = 6.4566 Å², bond-centred WFs, interpolated bands reproducing the SCF eigenvalues
-to 2.5e-12 eV ([examples/06_dftk_end_to_end.jl](examples/06_dftk_end_to_end.jl)).
+to 1e-12 eV, and the SCDM and explicit-projection starts reaching the identical minimum
+([examples/06](examples/06_dftk_end_to_end.jl), [07](examples/07_dftk_scdm_minimal.jl)).
 
 **Tight-binding model input** (`tb_model`, `read_tb`): interpolate the entire post-processing
 stack — bands, DOS, AHC, Berry curvature, FermiSurfer plots — directly from a `_hr.dat` or
@@ -290,7 +293,11 @@ The CLI honours `berry = true` / `berry_task = ahc` / `berry_kmesh` / `fermi_ene
 **SCDM automatic projections**: `scdm_projections(model; dir)` computes initial projections
 directly from the UNK wavefunctions (QRCP column selection, isolated/erfc/gaussian smearing) —
 no `projections` block needed. On GaAs, an SCDM start converges to the identical
-gauge-invariant minimum (Ω = 4.466880976) as the hand-chosen sp³ projections.
+gauge-invariant minimum (Ω = 4.466880976) as the hand-chosen sp³ projections. The array-level
+core (`scdm_amn`) also powers the projection-free DFTK path below — the **minimal-input
+workflow**: for an isolated manifold, `num_wann` is the only Wannier-specific input
+([examples/07_dftk_scdm_minimal.jl](examples/07_dftk_scdm_minimal.jl); silicon reaches the
+identical Ω = 6.4566 and bond centres as explicit projections, with no chemistry supplied).
 
 Both `.chk` (binary) and `.chk.fmt` (formatted) checkpoints read and write, validated bit-exact
 against `w90chk2chk.x` conversions.
