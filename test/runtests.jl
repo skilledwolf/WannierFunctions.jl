@@ -1344,3 +1344,25 @@ end
         @test_skip false
     end
 end
+
+@testset "in-memory model bridge (DFTK-style)" begin
+    # The DFTK bridge hands off in-memory arrays via wannier_model; check the in-memory path
+    # produces an identical wannierisation to reading the same content from files.
+    sd = joinpath(REFROOT, "testw90_example01")
+    seed = isfile(joinpath(sd, "gaas.win")) ? joinpath(sd, "gaas") : GAAS_SEED
+    if isfile(seed * ".mmn") && isfile(seed * ".amn")
+        m1 = read_model(seed)
+        M, kpb, gpb, _, _, _ = read_mmn(seed * ".mmn")
+        A, _, _, _ = read_amn(seed * ".amn")
+        w = read_win(seed * ".win")
+        eig = isfile(seed * ".eig") ? read_eig(seed * ".eig") : nothing
+        m2 = wannier_model(; unit_cell = w.unit_cell, kpoints = w.kpoints, mp_grid = w.mp_grid,
+                           num_wann = w.num_wann, M = M, A = A, kpb = kpb, gpb = gpb, eig = eig)
+        r1 = run_wannier(m1, w)
+        r2 = run_wannier(m2, w)
+        @test r1.spread.Ω ≈ r2.spread.Ω atol = 1e-9      # in-memory == file path
+        @test m2.num_bands == m1.num_bands
+    else
+        @test_skip false
+    end
+end

@@ -49,6 +49,7 @@ include("extras.jl")
 include("tbmodel.jl")
 include("symmetry.jl")
 include("injection.jl")
+include("dftk.jl")
 include("slwf.jl")
 include("sitesym.jl")
 include("wout.jl")
@@ -84,7 +85,7 @@ export tabulate_3d, write_frmsf
 export read_tb, tb_model
 export SymmetryOps, read_sym, nsym, irreducible_kmesh, cubic_point_group, anomalous_hall_sym
 export SLWF, slwf_omega, slwf_gradient
-export injection_current
+export injection_current, wannier_model
 export Sitesym, read_dmn, symmetrize_u!, symmetrize_gradient!
 export boltzwann, BoltzWannResult
 export ShcModel, ShcRyooModel, shc_fermiscan, shc_freqscan, read_spn, read_shu, write_shc

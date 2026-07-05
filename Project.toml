@@ -8,7 +8,14 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
+[weakdeps]
+DFTK = "acf6eb54-70d9-11e9-0013-234b7a5f5337"
+
+[extensions]
+WannierFunctionsDFTKExt = "DFTK"
+
 [compat]
+DFTK = "0.6, 0.7"
 StaticArrays = "1"
 julia = "1.10"
 
