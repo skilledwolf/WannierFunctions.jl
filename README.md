@@ -37,15 +37,26 @@ Requires **Julia ≥ 1.10**; the only runtime dependency is StaticArrays.
 pkg> add https://github.com/skilledwolf/WannierFunctions.jl   # (not yet registered)
 ```
 
+To also get the drop-in command-line binaries, either clone the repository and run them from
+`bin/`, or install launchers from the package:
+
+```julia
+julia> using WannierFunctions
+julia> install_cli()    # writes wannier90.jl / postw90.jl / w90chk2chk.jl to ~/.julia/bin
+```
+
 ## Quick start
 
 **Drop-in, from files** (any DFT interface that writes Wannier90 inputs):
 
 ```bash
-julia --project=. bin/wannier90.jl -pp silicon   # writes silicon.nnkp for pw2wannier90
-julia --project=. bin/wannier90.jl silicon       # localise → silicon.wout, _hr.dat, bands, .chk
-julia --project=. bin/postw90.jl silicon         # AHC/DOS/kpath/… per the .win keywords
+wannier90.jl -pp silicon   # writes silicon.nnkp for pw2wannier90
+wannier90.jl silicon       # localise → silicon.wout, _hr.dat, bands, .chk
+postw90.jl silicon         # AHC/DOS/kpath/… per the .win keywords
 ```
+
+(shown with the `install_cli()` launchers on `PATH`; from a clone, use
+`julia --project=. bin/wannier90.jl …` instead)
 
 **As a library** (results are data, not a `.wout` to parse):
 

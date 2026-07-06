@@ -6,6 +6,8 @@ where it exists. The docstrings (see [API](api.md)) carry the full keyword lists
 
 ## Run the drop-in binaries
 
+From a repository clone (or install launchers with `install_cli()` and drop the prefix):
+
 ```bash
 julia --project=. bin/wannier90.jl -pp seedname     # .nnkp generation (byte-identical)
 julia --project=. bin/wannier90.jl seedname         # wannierise; writes .wout/.chk/_hr/_tb/bands

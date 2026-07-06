@@ -17,10 +17,4 @@ end
 
 using WannierFunctions
 
-pp = any(a -> a in ("-pp", "--pp", "-postproc"), ARGS)
-args = [a for a in ARGS if !(a in ("-pp", "--pp", "-postproc"))]
-if isempty(args)
-    println(stderr, "usage: wannier90.jl [-pp] <seedname>")
-    exit(1)
-end
-WannierFunctions.main(replace(args[1], r"\.win$" => ""); pp=pp)
+exit(WannierFunctions.wannier90_cli(ARGS))

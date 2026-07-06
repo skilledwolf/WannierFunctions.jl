@@ -21,10 +21,14 @@ A typical Wannier90 run:
 Steps 1–3 are unchanged. Steps 2, 4, and 5 map one-to-one:
 
 ```bash
-julia --project=. bin/wannier90.jl -pp seedname     # step 2 (byte-identical .nnkp)
-julia --project=. bin/wannier90.jl seedname         # step 4 (same outputs, same formats)
-julia --project=. bin/postw90.jl seedname           # step 5 (same .dat files)
+wannier90.jl -pp seedname     # step 2 (byte-identical .nnkp)
+wannier90.jl seedname         # step 4 (same outputs, same formats)
+postw90.jl seedname           # step 5 (same .dat files)
 ```
+
+The commands come either from a repository clone (`julia --project=. bin/wannier90.jl …`) or,
+for a `pkg> add`-installed package, from `using WannierFunctions; install_cli()`, which writes
+these launchers to `~/.julia/bin`.
 
 Or as a library, replacing steps 4–5 with data you can compute on:
 

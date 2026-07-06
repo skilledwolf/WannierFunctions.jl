@@ -17,21 +17,4 @@ end
 
 using WannierFunctions
 
-function usage()
-    println(stderr, "usage: w90chk2chk.jl -export|-import <seedname>")
-    exit(1)
-end
-
-length(ARGS) == 2 || usage()
-mode, seed = ARGS[1], replace(ARGS[2], r"\.chk(\.fmt)?$" => "")
-if mode in ("-export", "--export", "-u2f")          # binary -> formatted
-    chk = read_chk(seed * ".chk")
-    write_chk_fmt(seed * ".chk.fmt", chk)
-    println("$(seed).chk -> $(seed).chk.fmt")
-elseif mode in ("-import", "--import", "-f2u")      # formatted -> binary
-    chk = read_chk_fmt(seed * ".chk.fmt")
-    write_chk(seed * ".chk", chk)
-    println("$(seed).chk.fmt -> $(seed).chk")
-else
-    usage()
-end
+exit(WannierFunctions.w90chk2chk_cli(ARGS))

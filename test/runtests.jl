@@ -1724,3 +1724,20 @@ end
         @test_skip false
     end
 end
+
+@testset "CLI wrappers (install_cli + argv entry points)" begin
+    # Bad-usage paths return exit codes rather than exiting.
+    @test WannierFunctions.wannier90_cli(String[]) == 1
+    @test WannierFunctions.postw90_cli(String[]) == 1
+    @test WannierFunctions.w90chk2chk_cli(["-bogus", "x"]) == 1
+
+    mktempdir() do dir
+        written = install_cli(; dir = dir, julia_flags = ["-O0"])
+        names = basename.(written)
+        @test "wannier90.jl" in names && "postw90.jl" in names && "w90chk2chk.jl" in names
+        script = read(joinpath(dir, "wannier90.jl"), String)
+        @test occursin(Base.active_project(), script)        # launches this environment
+        @test occursin("wannier90_cli", script) && occursin("-O0", script)
+        Sys.iswindows() || @test uperm(joinpath(dir, "wannier90.jl")) & 0x01 != 0  # executable
+    end
+end

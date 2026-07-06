@@ -117,3 +117,99 @@ function main(seedname::AbstractString; pp::Bool=false, write_files::Bool=true, 
     end
     return model, win, result
 end
+
+# ---------------------------------------------------------------------------------------
+# argv-level entry points shared by bin/*.jl and the wrappers written by `install_cli`.
+# Each returns a process exit code instead of calling exit(), so they stay testable.
+
+function wannier90_cli(args::AbstractVector{<:AbstractString})
+    pp = any(a -> a in ("-pp", "--pp", "-postproc"), args)
+    rest = [a for a in args if !(a in ("-pp", "--pp", "-postproc"))]
+    if length(rest) != 1
+        println(stderr, "usage: wannier90.jl [-pp] <seedname>")
+        return 1
+    end
+    main(replace(rest[1], r"\.win$" => ""); pp=pp)
+    return 0
+end
+
+function postw90_cli(args::AbstractVector{<:AbstractString})
+    if length(args) != 1
+        println(stderr, "usage: postw90.jl <seedname>")
+        return 1
+    end
+    postw90_main(replace(args[1], r"\.win$" => ""))
+    return 0
+end
+
+function w90chk2chk_cli(args::AbstractVector{<:AbstractString})
+    if length(args) == 2
+        mode, seed = args[1], replace(args[2], r"\.chk(\.fmt)?$" => "")
+        if mode in ("-export", "--export", "-u2f")          # binary -> formatted
+            write_chk_fmt(seed * ".chk.fmt", read_chk(seed * ".chk"))
+            println("$(seed).chk -> $(seed).chk.fmt")
+            return 0
+        elseif mode in ("-import", "--import", "-f2u")      # formatted -> binary
+            write_chk(seed * ".chk", read_chk_fmt(seed * ".chk.fmt"))
+            println("$(seed).chk.fmt -> $(seed).chk")
+            return 0
+        end
+    end
+    println(stderr, "usage: w90chk2chk.jl -export|-import <seedname>")
+    return 1
+end
+
+"""
+    install_cli(; dir = joinpath(first(DEPOT_PATH), "bin"), julia_flags = String[]) -> Vector{String}
+
+Write launcher scripts `wannier90.jl`, `postw90.jl`, and `w90chk2chk.jl` into `dir`
+(created if needed; default `~/.julia/bin`) so the drop-in binaries are available to
+`pkg> add`-installed copies of the package, where the repository's `bin/` directory is not
+at hand. Returns the paths written.
+
+Each launcher runs `julia --project=<current active project>`, i.e. the environment
+`install_cli` was called from — the one that has WannierFunctions installed. Re-run after
+moving that environment. Extra flags for the `julia` invocation (e.g. `["-t", "auto"]`)
+can be baked in via `julia_flags`.
+
+Add `dir` to your `PATH` if it is not already on it; the function prints a hint when needed.
+On Windows, `.cmd` wrappers are written alongside the Unix ones.
+"""
+function install_cli(; dir::AbstractString = joinpath(first(DEPOT_PATH), "bin"),
+                     julia_flags::Vector{String} = String[])
+    project = Base.active_project()
+    project === nothing && error("no active project; activate the environment that has WannierFunctions installed")
+    julia = joinpath(Sys.BINDIR, "julia" * (Sys.iswindows() ? ".exe" : ""))
+    flags = join(julia_flags, " ")
+    mkpath(dir)
+    entries = ["wannier90.jl" => "wannier90_cli",
+               "postw90.jl" => "postw90_cli",
+               "w90chk2chk.jl" => "w90chk2chk_cli"]
+    written = String[]
+    for (name, fn) in entries
+        run_expr = "using WannierFunctions; exit(WannierFunctions.$fn(ARGS))"
+        path = joinpath(dir, name)
+        open(path, "w") do io
+            print(io, """
+                #!/bin/sh
+                exec "$julia" --project="$project" --startup-file=no $flags -e '$run_expr' -- "\$@"
+                """)
+        end
+        chmod(path, 0o755)
+        push!(written, path)
+        if Sys.iswindows()
+            cmd = joinpath(dir, replace(name, ".jl" => ".cmd"))
+            open(cmd, "w") do io
+                print(io, """
+                    @echo off
+                    "$julia" --project="$project" --startup-file=no $flags -e "$run_expr" -- %*
+                    """)
+            end
+            push!(written, cmd)
+        end
+    end
+    onpath = any(p -> !isempty(p) && ispath(p) && samefile(p, dir),
+                 filter(ispath, split(get(ENV, "PATH", ""), Sys.iswindows() ? ';' : ':')))
+    onpath || @info "add $(abspath(dir)) to your PATH to call wannier90.jl/postw90.jl/w90chk2chk.jl directly"
+    return written
+end

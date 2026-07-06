@@ -17,8 +17,4 @@ end
 
 using WannierFunctions
 
-if isempty(ARGS)
-    println(stderr, "usage: postw90.jl <seedname>")
-    exit(1)
-end
-postw90_main(replace(ARGS[1], r"\.win$" => ""))
+exit(WannierFunctions.postw90_cli(ARGS))

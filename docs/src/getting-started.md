@@ -13,6 +13,18 @@ pkg> add https://github.com/skilledwolf/WannierFunctions.jl   # (not yet registe
 Julia ≥ 1.10. For the in-memory DFT workflow you also need `pkg> add DFTK`; the plotting
 examples additionally use `Plots`.
 
+The `pkg> add` route gives you the library API. The drop-in command-line binaries live in
+the repository's `bin/` directory, so to use them either **clone the repo** and run
+`julia --project=. bin/wannier90.jl …`, or install launcher scripts from the package:
+
+```julia
+julia> using WannierFunctions
+julia> install_cli()    # wannier90.jl / postw90.jl / w90chk2chk.jl → ~/.julia/bin
+```
+
+The launchers run the environment `install_cli()` was called from; put `~/.julia/bin` on
+your `PATH` (the function prints a hint if it isn't) and the commands below work anywhere.
+
 ## Workflow A: from Wannier90 input files
 
 If a DFT interface (e.g. Quantum ESPRESSO's `pw2wannier90`) already produces
@@ -20,16 +32,18 @@ If a DFT interface (e.g. Quantum ESPRESSO's `pw2wannier90`) already produces
 
 ```bash
 # 1. write the b-vector request for the DFT interface (replaces `wannier90.x -pp`)
-julia --project=. bin/wannier90.jl -pp seedname
+wannier90.jl -pp seedname
 
 # 2. run pw2wannier90 as usual → seedname.amn/.mmn/.eig
 
 # 3. localise + interpolate (replaces `wannier90.x`)
-julia --project=. bin/wannier90.jl seedname
+wannier90.jl seedname
 
 # 4. post-process (replaces `postw90.x`): AHC, DOS, kpath, BoltzWann, … per the .win
-julia --project=. bin/postw90.jl seedname
+postw90.jl seedname
 ```
+
+(From a clone without `install_cli()`, prefix with `julia --project=. bin/`.)
 
 The same run as a library call, with results as data instead of a `.wout` to parse:
 

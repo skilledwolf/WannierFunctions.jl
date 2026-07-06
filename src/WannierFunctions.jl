@@ -69,7 +69,7 @@ export run_wannier, WannierResult, interpolate
 export wigner_seitz, build_hr, interpolate_hk, interpolate_bands
 export ws_translate_dist, interpolate_bands_ws
 export write_hr, read_hr, write_tb, write_band_dat, write_band_kpt, write_labelinfo
-export write_wout, generate_kpath, main
+export write_wout, generate_kpath, main, install_cli
 export generate_nnkp, write_nnkp, parse_projections, parse_exclude_bands, Projection
 export Checkpoint, read_chk, write_chk, read_chk_fmt, write_chk_fmt
 export read_unk, plot_wannier_functions, write_xsf, parse_range_list, wannier_function_grid
