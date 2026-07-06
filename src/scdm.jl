@@ -164,10 +164,14 @@ function scdm_auto(A::AbstractArray{<:Complex,3}, eig::AbstractMatrix{<:Real}; k
     P = Matrix{Float64}(undef, nb, nk)
     for k in 1:nk
         Ak = A[:, :, k]
-        # diag of A (A†A)⁻¹ A† — the projector onto the trial column space; ∈ [0,1] by
-        # construction (clamp guards round-off), independent of column normalisation.
-        Pk = real.(diag(Ak * (Hermitian(Ak' * Ak) \ Ak')))
-        P[:, k] = clamp.(Pk, 0.0, 1.0)
+        # Projectability = diagonal of the orthogonal projector onto the trial column space.
+        # Build it from the left singular vectors (Uᵣ Uᵣ†): ∈ [0,1] by construction and robust
+        # to rank-deficient / near-dependent columns, unlike a Cholesky solve of A†A.
+        F = svd(Ak)
+        tol = maximum(F.S; init = 0.0) * max(size(Ak)...) * eps(Float64)
+        r = count(>(tol), F.S)
+        Q = @view F.U[:, 1:r]
+        P[:, k] = clamp.(vec(sum(abs2, Q; dims = 2)), 0.0, 1.0)
     end
     return scdm_auto(P, eig; kwargs...)
 end
