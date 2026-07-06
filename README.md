@@ -1,5 +1,9 @@
 # WannierFunctions.jl
 
+[![CI](https://github.com/skilledwolf/WannierFunctions.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/skilledwolf/WannierFunctions.jl/actions/workflows/CI.yml)
+[![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://skilledwolf.github.io/WannierFunctions.jl/dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A modern, from-scratch Julia implementation of the complete **Wannier90 tool chain** —
 maximally-localised Wannier functions, disentanglement, Wannier interpolation, and the full
 `postw90` physics surface — **drop-in compatible** with the standard `.win/.amn/.mmn/.eig`
@@ -30,7 +34,7 @@ known behavioural difference.
 Requires **Julia ≥ 1.10**; the only runtime dependency is StaticArrays.
 
 ```julia
-pkg> dev /path/to/wannier90_greenfield     # or: add <url>  once published
+pkg> add https://github.com/skilledwolf/WannierFunctions.jl   # (not yet registered)
 ```
 
 ## Quick start

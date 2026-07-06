@@ -17,10 +17,10 @@ write(joinpath(@__DIR__, "src", "index.md"), readme)
 makedocs(;
     sitename = "WannierFunctions.jl",
     modules = [WannierFunctions],
-    # remotes/edit links need a public repository URL; set both when publishing.
-    remotes = nothing,
+    repo = Remotes.GitHub("skilledwolf", "WannierFunctions.jl"),
     format = Documenter.HTML(; prettyurls = get(ENV, "CI", "false") == "true",
-                             edit_link = nothing),
+                             canonical = "https://skilledwolf.github.io/WannierFunctions.jl",
+                             edit_link = "main"),
     pages = [
         "Home" => "index.md",
         "Getting started" => "getting-started.md",
@@ -36,5 +36,4 @@ makedocs(;
     warnonly = [:missing_docs, :cross_references],   # README keeps a few repo-relative links
 )
 
-# deploydocs is a no-op until the repository has a public URL; fill in `repo` when publishing:
-# deploydocs(; repo = "github.com/<org>/WannierFunctions.jl", devbranch = "main")
+deploydocs(; repo = "github.com/skilledwolf/WannierFunctions.jl", devbranch = "main")

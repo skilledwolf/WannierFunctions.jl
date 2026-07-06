@@ -7,7 +7,7 @@ parameters that actually matter.
 ## Installation
 
 ```julia
-pkg> dev /path/to/wannier90_greenfield        # or: add <url>  once published
+pkg> add https://github.com/skilledwolf/WannierFunctions.jl   # (not yet registered)
 ```
 
 Julia ≥ 1.10. For the in-memory DFT workflow you also need `pkg> add DFTK`; the plotting
