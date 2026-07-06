@@ -1,7 +1,7 @@
 # WannierFunctions.jl
 
 [![CI](https://github.com/skilledwolf/WannierFunctions.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/skilledwolf/WannierFunctions.jl/actions/workflows/CI.yml)
-[![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://skilledwolf.github.io/WannierFunctions.jl/dev/)
+[![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://tobiaswolf.net/WannierFunctions.jl/dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A modern, from-scratch Julia implementation of the complete **Wannier90 tool chain** —

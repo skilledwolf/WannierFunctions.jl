@@ -19,7 +19,7 @@ makedocs(;
     modules = [WannierFunctions],
     repo = Remotes.GitHub("skilledwolf", "WannierFunctions.jl"),
     format = Documenter.HTML(; prettyurls = get(ENV, "CI", "false") == "true",
-                             canonical = "https://skilledwolf.github.io/WannierFunctions.jl",
+                             canonical = "https://tobiaswolf.net/WannierFunctions.jl",
                              edit_link = "main",
                              size_threshold_ignore = ["api.md"]),
     pages = [

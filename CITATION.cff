@@ -10,7 +10,7 @@ version: 0.1.0
 date-released: 2026-07-04
 license: MIT
 repository-code: "https://github.com/skilledwolf/WannierFunctions.jl"
-url: "https://skilledwolf.github.io/WannierFunctions.jl/dev/"
+url: "https://tobiaswolf.net/WannierFunctions.jl/dev/"
 abstract: >
   A from-scratch Julia implementation of the Wannier90 core: maximally-localised
   Wannier functions (Marzari-Vanderbilt localisation, Souza-Marzari-Vanderbilt
