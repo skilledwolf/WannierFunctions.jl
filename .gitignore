@@ -13,3 +13,8 @@ docs/build/
 docs/src/index.md
 docs/Manifest.toml
 examples/output/*.jls
+# stray run artifacts (Wannier90 / postw90 / WannierBerri output dropped in repo root)
+*.wout
+*.werr
+*.npz
+result-inj_iter-*
