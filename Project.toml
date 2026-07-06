@@ -1,10 +1,11 @@
 name = "WannierFunctions"
 uuid = "e9bfaa8f-12b4-4bc0-a903-8435a0d6c1b2"
-authors = ["Tobias Wolf <tobias.mr.wolf@gmail.com>"]
 version = "0.1.0"
+authors = ["Tobias Wolf <tobias.mr.wolf@gmail.com>"]
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
@@ -16,6 +17,7 @@ WannierFunctionsDFTKExt = "DFTK"
 
 [compat]
 DFTK = "0.6, 0.7"
+PrecompileTools = "1"
 StaticArrays = "1"
 julia = "1.10"
 

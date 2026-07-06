@@ -172,4 +172,41 @@ end
 
 export initial_spread
 
+# --- Precompilation workload -----------------------------------------------------------
+# Run a small end-to-end pipeline at precompile time so its native code is cached in the
+# package image (Julia ≥ 1.9). This is what collapses the CLI/library time-to-first-result
+# from ~12 s of JIT to ~1–2 s: the isolated path (diamond, 4→4) and the disentanglement path
+# (silicon, 12→8) below cover read → wannierise → interpolate → write, i.e. the CLI's hot
+# code. Guarded by `isfile` so a data-stripped install just skips it.
+using PrecompileTools: @setup_workload, @compile_workload
+
+@setup_workload begin
+    datadir = joinpath(dirname(@__DIR__), "examples", "data")
+    @compile_workload begin
+        mktempdir() do tmp
+            for seed in ("diamond", "silicon")     # isolated (4→4) and disentangling (12→8)
+                src = joinpath(datadir, seed)
+                isfile(src * ".mmn") || continue
+                s = joinpath(tmp, seed)
+                for ext in (".win", ".amn", ".mmn", ".eig")
+                    isfile(src * ext) && cp(src * ext, s * ext; force=true)
+                end
+                try
+                    main(s; pp=true, verbose=false)             # -pp: kmesh, b-vectors, .nnkp
+                    model, win, res = main(s; verbose=false)    # wannierise + .wout/.chk writers
+                    # force the interpolation + band/H(R) writers regardless of .win flags
+                    irvec, ndegen = wigner_seitz(model.lattice, model.kgrid.mp_grid)
+                    Hr, _ = build_hr(res.U, res.eig_interp, model.kgrid, irvec)
+                    kp = [SVector(0.0, 0.0, 0.0), SVector(0.5, 0.0, 0.5)]
+                    interpolate_bands(Hr, irvec, ndegen, kp)
+                    interpolate_bands_ws(Hr, irvec, ndegen, res.spread.centres,
+                                         model.lattice, model.kgrid.mp_grid, kp)
+                    write_hr(s * "_hr.dat", model.num_wann, irvec, ndegen, Hr)
+                catch
+                end
+            end
+        end
+    end
+end
+
 end # module
