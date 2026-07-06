@@ -91,6 +91,7 @@ graphene from first principles** (figures in [examples/output](examples/output))
 |------|-----|
 | [Getting started](docs/src/getting-started.md) | New users: both workflows end to end, reading results, choosing windows/projections, troubleshooting |
 | [How-to guides](docs/src/howto.md) | Experienced users: recipes for every module — disentanglement schemes, postw90 tasks, transport, symmetry, TB input, DFTK |
+| [Using from Python](docs/src/python.md) | Python users: the CLIs in `subprocess` pipelines, or the library API via juliacall with numpy in/out |
 | [Wannier90 compatibility](docs/src/wannier90-compat.md) | Binary/keyword mapping, conventions, and every known behavioural difference |
 | [Validation](docs/src/validation.md) | The oracle methodology and the complete parity results |
 | [Theory](docs/src/theory.md) | The mathematics: spread functional, b-vectors, gradients, disentanglement, interpolation |
