@@ -150,6 +150,14 @@ Returns a named tuple: `mu`/`sigma` are the SCDM parameters ready to pass to
 [`scdm_projections`](@ref) / `wannier_model` (`mu = mu_fit − sigma_factor·sigma_fit`),
 `mu_fit`/`sigma_fit` are the raw erfc fit, and `rms` is the fit residual (a large value
 warns that the projectability is not erfc-like — e.g. a manifold not separable in energy).
+
+The fit is only as clean as the projectability. It is designed for **pseudo-atomic-orbital**
+projectabilities — the ones Quantum ESPRESSO's `atomic_proj`/`projwfc` produce, and what the
+Vitale protocol assumes — where `P(ε)` drops monotonically from ≈1 to ≈0. Crude trial
+orbitals (e.g. a hydrogenic guess that misses the true radial shape, or a valence shell an
+`n ≤ 3` hydrogenic cannot represent) can give a non-erfc cloud and a degenerate fit with a
+large `rms`; treat that `rms` as the honest signal that this projectability is not a good
+basis for the fit, not as a value to feed onward.
 """
 function scdm_auto(proj::AbstractMatrix{<:Real}, eig::AbstractMatrix{<:Real};
                    sigma_factor::Real=3.0)

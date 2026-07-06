@@ -44,9 +44,12 @@ A = scdm_projections(model; dir="UNK_dir", mode=:erfc, mu=εF, sigma=2.0)   # fr
 # array (projectability computed as the trial-space projector diagonal):
 fit = scdm_auto(A, model.eig)          # ⇒ (; mu, sigma, mu_fit, sigma_fit, rms)
 A   = scdm_projections(model; dir="UNK_dir", mode=:erfc, mu=fit.mu, sigma=fit.sigma)
-# A LARGE `rms` means the manifold is not energy-separable (projectability is not erfc-like) —
-# then character-based PDWF, not SCDM-erfc, is the right tool (e.g. graphene π vs σ). scdm_auto
-# fits best for entangled but energy-separable manifolds such as transition-metal d-bands.
+# A LARGE `rms` means the projectability is not erfc-like — then character-based PDWF, not
+# SCDM-erfc, is the right tool (e.g. graphene π vs σ; see example 08 minimal). scdm_auto is at
+# its best on the PSEUDO-ATOMIC projectabilities Quantum ESPRESSO's projwfc/atomic_proj writes
+# (the Vitale setting): there P(ε) drops cleanly and the (μ, σ) fit is well-conditioned. A
+# crude hydrogenic guess can give a degenerate fit even when the manifold is separable — the
+# quality of the projectability basis, not just the physics, decides whether the fit is clean.
 ```
 
 ## Localisation variants
