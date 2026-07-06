@@ -24,6 +24,8 @@ you can see the agreement directly.
 | `05_berry_ahc.jl` | bcc Fe, 18 WF (SOC) | **Berry curvature + anomalous Hall conductivity** from a finished run's checkpoint; reproduces `postw90.x` digit-for-digit. |
 | `06_dftk_end_to_end.jl` | silicon, 4 → 4 WF | **All-Julia DFT → Wannier** pipeline: a DFTK SCF handed to the wannieriser in memory (no files, no binaries); needs `] add DFTK`. |
 | `07_dftk_scdm_minimal.jl` | silicon, 4 → 4 WF | The **minimal-input workflow**: DFTK + **SCDM** automatic projections — `num_wann` is the only Wannier-specific input; needs `] add DFTK`. |
+| `08_dftk_bilayer_graphene.jl` | AB bilayer graphene, 20 → 4 WF | DFTK slab → four **pz Wannier functions** via ortho-atomic projections + **PDWF projectability freezing** (vacuum states never intrude); band plot with the Bernal quadratic touching and γ₁ splitting at K; needs `] add DFTK Plots`. |
+| `09_tbg_local_stacking.jl` | twisted bilayer graphene | **Magic-angle physics from first principles** via the local-stacking approximation: 9 DFTK stackings → interlayer Dirac coupling T(d) → Bistritzer–MacDonald w₀/w₁ (C₃-exact trio) → moiré flat bands and the magic-angle dip; needs `] add DFTK Plots`, ~15 min (cached). |
 
 ## Command-line equivalent
 

@@ -107,9 +107,12 @@ function dis_windows_proj(eig::Matrix{Float64}, A::Array{ComplexF64,3}, num_wann
         for i in 1:nb
             (e[i] < win_min || e[i] > win_max) && continue          # discard: outside energy win
             p = sum(abs2(A[i, w, k]) for w in 1:num_wann)
-            (p < -1e-8 || p > 1 + 1e-8) &&
+            # Non-orthogonal atomic projectors (overlapping orbitals on different sites) can
+            # push the projectability slightly above 1; tolerate a few percent and clamp.
+            (p < -1e-8 || p > 1.05) &&
                 error("dis_windows_proj: projectability $p ∉ [0,1] at band $i, k=$k — " *
-                      ".amn columns not orthonormal")
+                      ".amn columns far from orthonormal")
+            p = clamp(p, 0.0, 1.0)
             isfroz = p >= proj_max || (frozen && froz_min <= e[i] <= froz_max)
             if isfroz
                 push!(bands, i); push!(lf, true)
