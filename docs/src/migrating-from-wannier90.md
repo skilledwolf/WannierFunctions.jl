@@ -1,112 +1,88 @@
 # Migrating from Wannier90
 
 If you already run `wannier90.x`, this package slots into the same place in your workflow. It
-reads the **same input files** your DFT interface produces — `.win`, `.amn`, `.mmn`, `.eig` — so
-no changes to the DFT → Wannier90 setup are required. What changes is that you drive the
-localisation and interpolation from Julia and get the results back as native data structures
-instead of parsing a `.wout`.
+reads the **same input files** your DFT interface produces — `.win`, `.amn`, `.mmn`, `.eig` —
+so nothing upstream changes. You can drive it two ways: as drop-in binaries writing the same
+output files, or from Julia with results as native data structures instead of a `.wout` to
+parse.
 
-## The standard Wannier90 pipeline vs. this package
+## The pipeline mapping
 
 A typical Wannier90 run:
 
 ```
-1. SCF + NSCF (DFT)                         → wavefunctions
-2. wannier90.x -pp seedname                 → seedname.nnkp (b-vectors requested)
-3. pw2wannier90 (or your interface)         → seedname.amn/.mmn/.eig
-4. wannier90.x seedname                     → localise + interpolate → seedname.wout, _hr.dat, _band.dat
+1. SCF + NSCF (DFT)                    → wavefunctions
+2. wannier90.x -pp seedname            → seedname.nnkp
+3. pw2wannier90 (or your interface)    → seedname.amn/.mmn/.eig (+ .spn/.uHu/.dmn as needed)
+4. wannier90.x seedname                → .wout, .chk, _hr.dat, band files
+5. postw90.x seedname                  → AHC, DOS, kpath, BoltzWann, … .dat files
 ```
 
-Steps 1–3 are unchanged: keep producing `.amn/.mmn/.eig` exactly as before. This package
-replaces **step 4**:
+Steps 1–3 are unchanged. Steps 2, 4, and 5 map one-to-one:
+
+```bash
+julia --project=. bin/wannier90.jl -pp seedname     # step 2 (byte-identical .nnkp)
+julia --project=. bin/wannier90.jl seedname         # step 4 (same outputs, same formats)
+julia --project=. bin/postw90.jl seedname           # step 5 (same .dat files)
+```
+
+Or as a library, replacing steps 4–5 with data you can compute on:
 
 ```julia
 using WannierFunctions
 
-model = read_model("seedname")               # reads .win/.amn/.mmn/.eig
-res   = run_wannier(model)                   # ← replaces the wannier90.x minimiser
-                                             #   (add win_max=…, froz_max=… for entangled bands)
-H = hamiltonian_operator(model, res)         # ← the H(R) that goes into _hr.dat
-E = bands(H, kpath)                          # ← replaces bands_plot
+model = read_model("seedname")               # .win/.amn/.mmn/.eig
+res   = run_wannier(model)                   # windows via keywords for entangled bands
+
+H = hamiltonian_operator(model, res)         # the H(R) behind _hr.dat
+E = bands(H, kpath)                          # replaces bands_plot
+
+bm = BerryModel("seedname")                  # from the .chk you (or we) wrote
+anomalous_hall(bm; fermi_energy=…, kmesh=…)  # replaces postw90's berry_task = ahc
 ```
 
-(And step 2 is covered too: `bin/wannier90.jl -pp seedname` writes the `.nnkp`.)
+Checkpoints interchange in both directions: `wannier90.x restart=plot` consumes our `.chk`,
+and `BerryModel` consumes theirs. `bin/w90chk2chk.jl` converts `.chk ↔ .chk.fmt`.
 
-## Where your `.win` keywords map
+## Where your `.win` keywords go
 
-| `.win` keyword | Effect here |
-|----------------|-------------|
-| `num_wann`, `num_bands` | read from `.win`; `num_bands > num_wann` triggers disentanglement automatically |
-| `mp_grid` | drives the k-mesh, b-vectors, and the Wigner–Seitz set |
-| `num_iter` | passed to `wannierise(model; num_iter = …)` |
-| `unit_cell_cart`, `atoms_frac/cart` | build the lattice; cell may be in `bohr` |
-| `projections` | consumed to build the initial gauge from the `.amn` |
-| `kpoints` | the mesh; `kpoint_path` gives the interpolation path |
-| `dis_win_*`, `dis_froz_*`, `dis_num_iter`, `dis_mix_ratio` | disentanglement — **supported**; `run_wannier` auto-selects it when `num_bands > num_wann` |
-| `bands_plot`, `bands_num_points`, `write_hr`, `write_tb` | honoured by the `bin/wannier90.jl` CLI to write the band / `_hr.dat` / `_tb.dat` files |
+The short version: **they work**. The parser is strict (unknown keywords error with a
+did-you-mean; recognised-but-unsupported ones warn once), and the supported set covers the
+wannierise, disentanglement (energy windows, `dis_spheres`, PDWF projectability, symmetry-
+adapted), plotting/output, transport, and all postw90 module keywords. The precise policy,
+keyword semantics matched to the reference source, and the (short) list of behavioural
+differences are in [Wannier90 compatibility](wannier90-compat.md).
 
-## What you get back
+| You used | Here |
+|----------|------|
+| `num_bands > num_wann` + `dis_win_*`/`dis_froz_*` | same keywords; `run_wannier` auto-selects disentanglement |
+| `guiding_centres`, `precond`, `slwf_*`, `site_symmetry`, `use_ss_functional`, `gamma_only`, `higher_order_n` | same keywords, implemented and validated |
+| `berry_task = ahc/morb/kubo/sc/shc/kdotp`, `gyrotropic`, `dos`, `kpath`, `kslice`, `geninterp`, `boltzwann`, `spin_moment` | `bin/postw90.jl`, or the per-module Julia API ([How-to](howto.md)) |
+| `transport = true`, `transport_mode = bulk` | supported (`tran_lcr` is the one exclusion) |
+| `wannier_plot`, cube/xsf, `write_rmn/_tb/_hr/_hr_diag/xyz`, `.bxsf` | supported, reference formats |
 
-Instead of scraping the `.wout`, you read fields directly:
+## What you get back (library route)
 
-- `res.spread.Ω, .ΩI, .ΩOD, .ΩD` — the spread decomposition (the `Omega I/D/OD/Total` lines of a
-  `.wout`), in Å².
-- `res.spread.centres` (3 × num_wann, Cartesian Å) and `res.spread.spreads` (Å²) — the per-WF
-  centre-and-spread lines.
-- `res.U` — the final gauge, per k-point.
-- `res.omega_trace`, `res.niter`, `res.converged` — the convergence trace.
+Instead of scraping a `.wout`:
 
-These reproduce the reference `.wout` numbers to the test-suite tolerances (~1e-6 on the Omega
-components, ~1e-5 Å on centres), for both the isolated-bands and the disentanglement cases.
+- `res.spread.Ω, .ΩI, .ΩOD, .ΩD` — the `Omega I/D/OD/Total` lines, in Å².
+- `res.spread.centres` (3 × num_wann, Cartesian Å) and `.spreads` — the per-WF lines.
+- `res.U`, `res.omega_trace`, `res.niter`, `res.converged` — the gauge and convergence trace.
+- Disentangled runs: `res.omega_I`, `res.dis.omega_I_trace`.
 
-## Supported vs. not-yet-supported
-
-**Supported and validated:**
-
-- Reading `.win/.amn/.mmn/.eig`.
-- b-vector shells and B1 weights from the mesh.
-- Initial (Löwdin-projected) gauge, centres, and spread.
-- MLWF localisation for `num_bands == num_wann` (isolated bands).
-- **Disentanglement** (`num_bands > num_wann`) with outer + frozen energy windows
-  (Souza–Marzari–Vanderbilt Ω_I minimisation) — validated on silicon and copper.
-- Wannier interpolation: `H(k) → H(R)` on the Wigner–Seitz set, and band interpolation on a
-  k-path, including the `use_ws_distance` minimal-image refinement (the reference default;
-  validated against the reference binary to ~2e-5 eV).
-- **Output writers**: `.wout`, `_hr.dat`, `_tb.dat`, `_band.dat/.kpt/.labelinfo.dat`, driven by
-  the `bin/wannier90.jl` command-line front end (a drop-in for `wannier90.x`).
-
-**Also supported:**
-
-- **`-pp` mode**: `bin/wannier90.jl -pp seed` (or `postproc_setup = .true.`) generates the k-mesh
-  from the `.win` alone and writes `seed.nnkp`, byte-identical to `wannier90.x -pp` — so a new
-  DFT → Wannier workflow can start here, not just finish here.
-- **Position operator** `⟨0m|r|Rn⟩`: `position_operator(model, res)`, and `_tb.dat` is written
-  with real r-blocks (validated against the reference binary to the E15.8 file precision).
-- **Strict input validation**: unknown `.win` keywords error with a did-you-mean suggestion
-  (checked against the reference parser's own keyword catalogue); recognised-but-unsupported
-  keywords warn once. Pass `read_win(path; strict=false)` to downgrade to warnings.
-- **Two optimisers**: the CLI/.win path uses `:w90` (reference-exact); the Julia-native API
-  defaults to `:rcg` (Riemannian CG with real convergence). Same minima, verified by tests.
-
-**Not yet supported:**
-
-- **`.chk` / `.chk.fmt`** read/write for full-precision interchange with `wannier90.x`.
-- **`guiding_centres`** branch selection for the `Im ln` sheet (default off; the CLI warns if you
-  set it and falls back to the principal branch).
-- `_r.dat` and Berry-phase observables (the position operator itself is implemented; `_tb.dat`
-  carries real r-blocks).
-- **Γ-only** real-gauge minimiser (a distinct algorithm in the reference); use the general path.
-- Projectability (`dis_froz_proj`) / symmetry-adapted (SAWF) variants, and `postw90.x`
-  post-processing (out of scope for the core).
+These reproduce the reference `.wout` numbers to the test-suite tolerances or better — see
+[Validation](validation.md).
 
 ## Behavioural notes to expect
 
 - **Convergence semantics differ by optimiser.** The `.win`/CLI path uses `:w90`, where —
-  matching Wannier90 — the convergence check is off by default (`conv_window = -1`) and the loop
-  runs the full `num_iter`; `converged = false` there just means the optional early stop wasn't
-  enabled. The Julia-native default `:rcg` has a real convergence criterion and `converged`
-  means what it says.
-- **Units.** Centres and spreads come back in Å / Å² even if your `.win` cell is in `bohr`,
-  matching the `.wout` convention. Energies are eV.
-- **Branch cut.** The `Im ln` principal branch is used (as in the default, no-guiding-centres
-  Wannier90 path); results match provided your starting projections are reasonable.
+  matching Wannier90 — the convergence check is off unless `conv_window > 1` and the loop runs
+  the full `num_iter`. The Julia-native default `:rcg` has a real convergence criterion and
+  `converged` means what it says. Same minima either way (asserted by tests).
+- **Units.** Centres/spreads come back in Å / Å² even for a `bohr` cell, matching the `.wout`
+  convention; energies are eV. The bohr constant is the reference default (CODATA2006).
+- **`use_ws_distance` defaults to true** (as in postw90) — mind it when comparing against old
+  runs that disabled it.
+- **Γ-only** runs the reference's real-orthogonal algorithm and returns exactly real gauges.
+- One step further than migration: with DFTK you can skip the file round-trip entirely —
+  see [Getting started](getting-started.md), Workflow B.
