@@ -145,6 +145,10 @@ know about the band structure:
   orbital character instead of energy — robust when unwanted states (surface/vacuum states in
   slabs, semicore) intrude into any energy window.
 - *SCDM-erfc*: the smearing function does the selecting; combine with a generous outer window.
+  Its `(μ, σ)` can be fitted automatically from the projectability curve with
+  [`scdm_auto`](@ref) — but only when the target manifold is separable in energy; when its
+  fit residual is large, the manifold is character-selected (like graphene's π vs σ) and PDWF
+  is the right tool (see [`examples/08` minimal](../../examples/08_dftk_bilayer_graphene_minimal.jl)).
 
 **3. The optimiser.** `algorithm = :rcg` (default) has a true convergence criterion and
 usually needs fewer iterations; `algorithm = :w90` reproduces the reference trajectory exactly

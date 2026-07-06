@@ -81,7 +81,7 @@ wmodel = wannier_model(scfres; num_wann=4)        # ← the entire Wannier speci
 res    = wannierise(wmodel; algorithm=:w90)
 ```
 
-More in [Getting started](docs/src/getting-started.md), and nine runnable
+More in [Getting started](docs/src/getting-started.md), and ten runnable
 [examples](examples/README.md) from GaAs localisation up to **magic-angle twisted bilayer
 graphene from first principles** (figures in [examples/output](examples/output)).
 
@@ -97,7 +97,7 @@ graphene from first principles** (figures in [examples/output](examples/output))
 | [Theory](docs/src/theory.md) | The mathematics: spread functional, b-vectors, gradients, disentanglement, interpolation |
 | [File formats](docs/src/file-formats.md) | `.win/.amn/.mmn/.eig/_hr.dat/…` specifications |
 | [Migrating from Wannier90](docs/src/migrating-from-wannier90.md) | Mapping an existing workflow |
-| [Examples](examples/README.md) | Nine runnable scripts with reference numbers and plots |
+| [Examples](examples/README.md) | Ten runnable scripts with reference numbers and plots |
 | [docs/reference-notes/](docs/reference-notes/) | Implementation-grade notes per algorithm (conventions, oracle anchors, upstream quirks) |
 
 Build the HTML docs locally with `julia --project=docs docs/make.jl` (works offline).

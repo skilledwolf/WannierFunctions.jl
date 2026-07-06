@@ -25,6 +25,7 @@ you can see the agreement directly.
 | `06_dftk_end_to_end.jl` | silicon, 4 → 4 WF | **All-Julia DFT → Wannier** pipeline: a DFTK SCF handed to the wannieriser in memory (no files, no binaries); needs `] add DFTK`. |
 | `07_dftk_scdm_minimal.jl` | silicon, 4 → 4 WF | The **minimal-input workflow**: DFTK + **SCDM** automatic projections — `num_wann` is the only Wannier-specific input; needs `] add DFTK`. |
 | `08_dftk_bilayer_graphene.jl` | AB bilayer graphene, 20 → 4 WF | DFTK slab → four **pz Wannier functions** via ortho-atomic projections + **PDWF projectability freezing** (vacuum states never intrude); band plot with the Bernal quadratic touching and γ₁ splitting at K; needs `] add DFTK Plots`. |
+| `08_dftk_bilayer_graphene_minimal.jl` | AB bilayer graphene, 20 → 4 WF | The **lean** companion: same pz + PDWF model in far less code, one figure. Uses **`scdm_auto`** to show *why* the graphene π model cannot be reduced to an energy-only recipe — the projectability-vs-energy fit residual is large because π/σ overlap in energy (an instructive boundary of SCDM-erfc). |
 | `09_tbg_local_stacking.jl` | twisted bilayer graphene | **Magic-angle physics from first principles** via the local-stacking approximation: 9 DFTK stackings → interlayer Dirac coupling T(d) → Bistritzer–MacDonald w₀/w₁ (C₃-exact trio) → moiré flat bands and the magic-angle dip; needs `] add DFTK Plots`, ~15 min (cached). |
 
 ## Command-line equivalent

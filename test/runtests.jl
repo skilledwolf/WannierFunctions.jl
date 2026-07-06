@@ -1741,3 +1741,38 @@ end
         Sys.iswindows() || @test uperm(joinpath(dir, "wannier90.jl")) & 0x01 != 0  # executable
     end
 end
+
+@testset "scdm_auto (Vitale μ/σ fit)" begin
+    # Synthetic erfc projectability with known parameters + bounded deterministic noise:
+    # the LM fit must recover (μ_fit, σ_fit) and apply the μ = μ_fit − 3σ_fit shift.
+    μt, σt = -3.5, 1.7
+    nb, nk = 40, 12
+    eig = zeros(nb, nk); proj = zeros(nb, nk)
+    for k in 1:nk, m in 1:nb
+        e = -12.0 + 24.0 * (m - 1) / (nb - 1) + 0.13 * sin(2.3m + 0.7k)
+        eig[m, k] = e
+        proj[m, k] = clamp(0.5 * WannierFunctions.erfc_((e - μt) / σt) + 0.02 * sin(11.0m + 3.1k),
+                           0.0, 1.0)
+    end
+    r = scdm_auto(proj, eig; sigma_factor = 3.0)
+    @test isapprox(r.mu_fit, μt; atol = 0.15)
+    @test isapprox(r.sigma_fit, σt; atol = 0.15)
+    @test isapprox(r.mu, μt - 3σt; atol = 0.5)
+    @test r.rms < 0.05
+
+    # The .amn convenience method: projectability is the diagonal of the trial-space
+    # projector, so it is guaranteed ∈ [0,1] even for non-orthonormal / rank-deficient
+    # columns. Build a low-energy manifold with strong overlap on the trial block and
+    # check the fit places μ below the manifold and returns a valid, positive σ.
+    A = zeros(ComplexF64, nb, 4, nk)
+    for k in 1:nk, m in 1:nb
+        # bands 1..8 carry the trial character (energies well below μt), higher bands ~none
+        wt = m <= 8 ? 1.0 : 0.01
+        for j in 1:4
+            A[m, j, k] = wt * cis(0.3m + 0.9j + 0.1k) * (0.5 + 0.5 * cos(1.7m + 2.1j))
+        end
+    end
+    r2 = scdm_auto(A, eig; sigma_factor = 3.0)
+    @test isfinite(r2.mu) && r2.sigma > 0 && isfinite(r2.rms)
+    @test r2.mu < r2.mu_fit                     # the −kσ shift moved μ down
+end

@@ -73,7 +73,7 @@ export write_wout, generate_kpath, main, install_cli
 export generate_nnkp, write_nnkp, parse_projections, parse_exclude_bands, Projection
 export Checkpoint, read_chk, write_chk, read_chk_fmt, write_chk_fmt
 export read_unk, plot_wannier_functions, write_xsf, parse_range_list, wannier_function_grid
-export scdm_projections, scdm_amn, write_amn
+export scdm_projections, scdm_amn, scdm_auto, write_amn
 export BerryModel, berry_curvature_k, anomalous_hall, ahc_fermiscan
 export geninterp, eig_deleig, read_geninterp_kpt
 export optical_conductivity, KuboResult, kubo_S, kubo_A

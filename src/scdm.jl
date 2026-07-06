@@ -120,6 +120,113 @@ function erfc_(x::Float64)
     return x >= 0 ? e : 2.0 - e
 end
 
+# --------------------------------------------------------------------------------------
+# scdm_auto — fit the SCDM erfc smearing (μ, σ) from a projectability-vs-energy curve,
+# the Vitale et al. high-throughput protocol (npj Comput. Mater. 6, 66 (2020)).
+#
+# The projectability of Kohn–Sham state |ψ_mk⟩ onto the trial manifold is
+# P_mk = ⟨ψ_mk|P̂|ψ_mk⟩ = [A_k (A_k†A_k)⁻¹ A_k†]_mm ∈ [0,1] (diagonal of the orthogonal
+# projector built from the .amn columns — the same quantity the PDWF window uses, made
+# gauge/normalisation-proof by the (A†A)⁻¹). The cloud {(ε_mk, P_mk)} follows a
+# complementary error function; fitting it gives (μ_fit, σ_fit), and the SCDM smearing
+# f(ε) = ½ erfc((ε−μ)/σ) is then set to μ = μ_fit − k·σ_fit, σ = σ_fit (k = 3 by default,
+# as in aiida-wannier90-workflows), shifting the window down so the manifold is kept with
+# weight ≈ 1.
+
+"""
+    scdm_auto(proj, eig; sigma_factor=3.0) -> (; mu, sigma, mu_fit, sigma_fit, rms)
+    scdm_auto(A,    eig; sigma_factor=3.0) -> (; mu, sigma, mu_fit, sigma_fit, rms)
+
+Fit the SCDM erfc smearing parameters from a projectability-vs-energy curve (Vitale et al.,
+npj Comput. Mater. **6**, 66 (2020)), removing the last hand-set numbers from an SCDM-erfc
+wannierisation.
+
+The first form takes a projectability matrix `proj` and band energies `eig`, both
+`num_bands × nkpt` (energies in eV). The second computes the projectability itself from an
+`.amn` array `A` (`num_bands × num_wann × nkpt`) as the diagonal of the orthogonal projector
+onto each k-point's trial columns, so it works for non-orthonormal trial orbitals.
+
+Returns a named tuple: `mu`/`sigma` are the SCDM parameters ready to pass to
+[`scdm_projections`](@ref) / `wannier_model` (`mu = mu_fit − sigma_factor·sigma_fit`),
+`mu_fit`/`sigma_fit` are the raw erfc fit, and `rms` is the fit residual (a large value
+warns that the projectability is not erfc-like — e.g. a manifold not separable in energy).
+"""
+function scdm_auto(proj::AbstractMatrix{<:Real}, eig::AbstractMatrix{<:Real};
+                   sigma_factor::Real=3.0)
+    size(proj) == size(eig) || error("scdm_auto: proj $(size(proj)) and eig $(size(eig)) differ")
+    μf, σf, rms = _fit_erfc(vec(Float64.(eig)), vec(Float64.(proj)))
+    return (; mu = μf - sigma_factor * σf, sigma = σf, mu_fit = μf, sigma_fit = σf, rms = rms)
+end
+
+function scdm_auto(A::AbstractArray{<:Complex,3}, eig::AbstractMatrix{<:Real}; kwargs...)
+    nb, nw, nk = size(A)
+    (nb, nk) == size(eig) || error("scdm_auto: A is $(nb)×$(nw)×$(nk); eig must be $(nb)×$(nk)")
+    P = Matrix{Float64}(undef, nb, nk)
+    for k in 1:nk
+        Ak = A[:, :, k]
+        # diag of A (A†A)⁻¹ A† — the projector onto the trial column space; ∈ [0,1] by
+        # construction (clamp guards round-off), independent of column normalisation.
+        Pk = real.(diag(Ak * (Hermitian(Ak' * Ak) \ Ak')))
+        P[:, k] = clamp.(Pk, 0.0, 1.0)
+    end
+    return scdm_auto(P, eig; kwargs...)
+end
+
+# 2-parameter Levenberg–Marquardt fit of P(ε) = ½ erfc((ε−μ)/σ) to a scatter {(ε_i, P_i)}.
+function _fit_erfc(ε::Vector{Float64}, p::Vector{Float64}; maxiter::Int=300)
+    length(ε) >= 3 || error("scdm_auto: need at least 3 (energy, projectability) points")
+    invsqrtπ = 1 / sqrt(π)
+
+    # Initial guess: weight each point by p(1−p) (peaks in the transition region) to locate μ,
+    # its spread to size σ. Falls back to the energy median/spread if there is no transition.
+    w = p .* (1 .- p)
+    sw = sum(w)
+    μ, σ = if sw > 1e-6
+        m = sum(w .* ε) / sw
+        v = sum(w .* (ε .- m) .^ 2) / sw
+        m, max(sqrt(v), 1e-3)
+    else
+        me = sum(ε) / length(ε)
+        me, max(sqrt(sum((ε .- me) .^ 2) / length(ε)) / 4, 1e-3)
+    end
+
+    resid(μ, σ) = 0.5 .* erfc_.((ε .- μ) ./ σ) .- p
+    cost(μ, σ) = sum(abs2, resid(μ, σ))
+
+    λ = 1e-3
+    c = cost(μ, σ)
+    for _ in 1:maxiter
+        t = (ε .- μ) ./ σ
+        e = exp.(-t .^ 2)
+        gμ = e .* (invsqrtπ / σ)              # ∂/∂μ [½ erfc(t)]
+        gσ = (t .* e) .* (invsqrtπ / σ)       # ∂/∂σ [½ erfc(t)]
+        r = 0.5 .* erfc_.(t) .- p
+        # normal equations JᵀJ δ = −Jᵀr  (2×2)
+        a11 = sum(gμ .^ 2); a12 = sum(gμ .* gσ); a22 = sum(gσ .^ 2)
+        b1 = sum(gμ .* r); b2 = sum(gσ .* r)
+        improved = false
+        for _ in 1:30
+            d = (a11 + λ) * (a22 + λ) - a12^2
+            abs(d) < 1e-30 && (λ *= 10; continue)
+            δμ = -((a22 + λ) * b1 - a12 * b2) / d
+            δσ = -(-a12 * b1 + (a11 + λ) * b2) / d
+            μn, σn = μ + δμ, max(σ + δσ, 1e-4)
+            cn = cost(μn, σn)
+            if cn < c
+                μ, σ, c = μn, σn, cn
+                λ = max(λ / 3, 1e-12)
+                improved = true
+                break
+            else
+                λ *= 5
+            end
+        end
+        improved || break
+    end
+    rms = sqrt(c / length(ε))
+    return μ, σ, rms
+end
+
 """
     write_amn(path, A; header)
 

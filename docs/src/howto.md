@@ -38,6 +38,15 @@ dis = disentangle(model; win_max=20.0, spheres=[(SVector(0.5,0.5,0.5), 0.4)],
 # SCDM for the entangled case: energy-smeared automatic projections
 A = scdm_projections(model; dir="UNK_dir", mode=:erfc, mu=εF, sigma=2.0)   # from UNK files
 # (or in-memory: wannier_model(scfres; num_wann, num_bands, scdm_mode=:erfc, scdm_mu, scdm_sigma))
+
+# scdm_auto: fit the SCDM erfc (μ, σ) from the projectability-vs-energy curve (Vitale et al.),
+# so even those two numbers are automatic. Pass a projectability matrix + energies, or an .amn
+# array (projectability computed as the trial-space projector diagonal):
+fit = scdm_auto(A, model.eig)          # ⇒ (; mu, sigma, mu_fit, sigma_fit, rms)
+A   = scdm_projections(model; dir="UNK_dir", mode=:erfc, mu=fit.mu, sigma=fit.sigma)
+# A LARGE `rms` means the manifold is not energy-separable (projectability is not erfc-like) —
+# then character-based PDWF, not SCDM-erfc, is the right tool (e.g. graphene π vs σ). scdm_auto
+# fits best for entangled but energy-separable manifolds such as transition-metal d-bands.
 ```
 
 ## Localisation variants
