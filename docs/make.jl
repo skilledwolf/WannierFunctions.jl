@@ -20,7 +20,8 @@ makedocs(;
     repo = Remotes.GitHub("skilledwolf", "WannierFunctions.jl"),
     format = Documenter.HTML(; prettyurls = get(ENV, "CI", "false") == "true",
                              canonical = "https://skilledwolf.github.io/WannierFunctions.jl",
-                             edit_link = "main"),
+                             edit_link = "main",
+                             size_threshold_ignore = ["api.md"]),
     pages = [
         "Home" => "index.md",
         "Getting started" => "getting-started.md",
