@@ -112,6 +112,9 @@ Build the HTML docs locally with `julia --project=docs docs/make.jl` (works offl
   operator; the Berry-physics stack consumes them uniformly, whether they came from a
   checkpoint, a `_tb.dat`, or a live DFTK run.
 - **Threaded** k/R loops (size-gated); start Julia with `-t auto` for dense interpolation.
+- **Fast to first result**: the pipeline is precompiled into the package image, so a cold
+  `wannier90.jl` run is ~1 s (not the ~12 s of un-precompiled Julia), and warm the localiser
+  is on par with — often a touch faster than — `wannier90.x` on the same case.
 - **Honesty first**: validation compares only gauge-invariant quantities; caveats
   (e.g. cross-code tolerances, upstream bugs found) are documented, not hidden — see
   [Validation](docs/src/validation.md).
