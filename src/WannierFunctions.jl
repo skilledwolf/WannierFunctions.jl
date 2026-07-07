@@ -211,6 +211,52 @@ import Logging
                     end
                 catch
                 end
+                # postw90 driver on the .chk just written: cover the task families that need
+                # only .chk/.eig/.mmn (dos, kpath, geninterp, Berry AHC/Kubo, BoltzWann,
+                # kslice). Tiny k-meshes — this is about compiling code, not physics.
+                seed == "silicon" || continue
+                try
+                    open(s * ".win", "a") do io
+                        print(io, """
+
+                            fermi_energy = 6.0
+                            dos = true
+                            dos_kmesh = 2 2 2
+                            kpath = true
+                            kpath_task = bands
+                            begin kpoint_path
+                            L 0.5 0.5 0.5 G 0.0 0.0 0.0
+                            G 0.0 0.0 0.0 X 0.5 0.0 0.5
+                            end kpoint_path
+                            geninterp = true
+                            berry = true
+                            berry_task = ahc+kubo
+                            berry_kmesh = 2 2 2
+                            kubo_freq_max = 2.0
+                            boltzwann = true
+                            boltz_kmesh = 2 2 2
+                            boltz_mu_min = 5.0
+                            boltz_mu_max = 7.0
+                            boltz_mu_step = 1.0
+                            boltz_temp_min = 300.0
+                            boltz_temp_max = 300.0
+                            boltz_temp_step = 100.0
+                            kslice = true
+                            kslice_task = fermi_lines
+                            kslice_b1 = 1.0 0.0 0.0
+                            kslice_b2 = 0.0 1.0 0.0
+                            kslice_2dkmesh = 4
+                            kmesh = 2
+                            """)
+                    end
+                    open(s * "_geninterp.kpt", "w") do io
+                        print(io, "kpts\nfrac\n2\n1 0.0 0.0 0.0\n2 0.5 0.0 0.5\n")
+                    end
+                    Logging.with_logger(Logging.ConsoleLogger(logio)) do
+                        postw90_main(s)
+                    end
+                catch
+                end
             end
             close(logio)
         end
