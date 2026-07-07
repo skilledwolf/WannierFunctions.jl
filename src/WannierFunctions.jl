@@ -179,11 +179,16 @@ export initial_spread
 # (silicon, 12→8) below cover read → wannierise → interpolate → write, i.e. the CLI's hot
 # code. Guarded by `isfile` so a data-stripped install just skips it.
 using PrecompileTools: @setup_workload, @compile_workload
+import Logging
 
 @setup_workload begin
     datadir = joinpath(dirname(@__DIR__), "examples", "data")
     @compile_workload begin
         mktempdir() do tmp
+            # The CLI runs main() with verbose=true; route the @info logging through a
+            # ConsoleLogger onto a file IOStream (the same types as runtime stderr logging)
+            # so those paths are compiled too, silently.
+            logio = open(joinpath(tmp, "log.txt"), "w")
             for seed in ("diamond", "silicon")     # isolated (4→4) and disentangling (12→8)
                 src = joinpath(datadir, seed)
                 isfile(src * ".mmn") || continue
@@ -192,21 +197,27 @@ using PrecompileTools: @setup_workload, @compile_workload
                     isfile(src * ext) && cp(src * ext, s * ext; force=true)
                 end
                 try
-                    main(s; pp=true, verbose=false)             # -pp: kmesh, b-vectors, .nnkp
-                    model, win, res = main(s; verbose=false)    # wannierise + .wout/.chk writers
-                    # force the interpolation + band/H(R) writers regardless of .win flags
-                    irvec, ndegen = wigner_seitz(model.lattice, model.kgrid.mp_grid)
-                    Hr, _ = build_hr(res.U, res.eig_interp, model.kgrid, irvec)
-                    kp = [SVector(0.0, 0.0, 0.0), SVector(0.5, 0.0, 0.5)]
-                    interpolate_bands(Hr, irvec, ndegen, kp)
-                    interpolate_bands_ws(Hr, irvec, ndegen, res.spread.centres,
-                                         model.lattice, model.kgrid.mp_grid, kp)
-                    write_hr(s * "_hr.dat", model.num_wann, irvec, ndegen, Hr)
+                    Logging.with_logger(Logging.ConsoleLogger(logio)) do
+                        main(s; pp=true)             # -pp: kmesh, b-vectors, .nnkp
+                        model, win, res = main(s)    # wannierise + .wout/.chk writers
+                        # force interpolation + band/H(R) writers regardless of .win flags
+                        irvec, ndegen = wigner_seitz(model.lattice, model.kgrid.mp_grid)
+                        Hr, _ = build_hr(res.U, res.eig_interp, model.kgrid, irvec)
+                        kp = [SVector(0.0, 0.0, 0.0), SVector(0.5, 0.0, 0.5)]
+                        interpolate_bands(Hr, irvec, ndegen, kp)
+                        interpolate_bands_ws(Hr, irvec, ndegen, res.spread.centres,
+                                             model.lattice, model.kgrid.mp_grid, kp)
+                        write_hr(s * "_hr.dat", model.num_wann, irvec, ndegen, Hr)
+                    end
                 catch
                 end
             end
+            close(logio)
         end
     end
+    precompile(wannier90_cli, (Vector{String},))
+    precompile(postw90_cli, (Vector{String},))
+    precompile(w90chk2chk_cli, (Vector{String},))
 end
 
 end # module

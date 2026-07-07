@@ -5,6 +5,7 @@ authors = ["Tobias Wolf <tobias.mr.wolf@gmail.com>"]
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
@@ -17,6 +18,7 @@ WannierFunctionsDFTKExt = "DFTK"
 
 [compat]
 DFTK = "0.6, 0.7"
+Logging = "1"
 PrecompileTools = "1"
 StaticArrays = "1"
 julia = "1.10"
