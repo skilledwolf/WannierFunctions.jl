@@ -97,33 +97,31 @@ header line skipped, then num_wann, nrpts, the `(15I5)` ndegen block, then the
 matrix rows. Returns `Hr[j,i,irpt] = Re + im*Im` (undivided by ndegen).
 """
 function read_hr(path::AbstractString)
-    lines = readlines(path)
-    idx = 1
-    idx += 1                                   # skip header
-    num_wann = parse(Int, strip(lines[idx])); idx += 1
-    nrpts    = parse(Int, strip(lines[idx])); idx += 1
-    # ndegen: read nrpts integers across (15I5) wrapped lines
-    ndegen = Int[]
-    while length(ndegen) < nrpts
-        toks = split(strip(lines[idx]))
-        append!(ndegen, parse.(Int, toks))
-        idx += 1
-    end
-    length(ndegen) == nrpts ||
-        error("read_hr: parsed $(length(ndegen)) ndegen, expected $nrpts")
-    irvec = Vector{NTuple{3,Int}}(undef, nrpts)
-    Hr = zeros(ComplexF64, num_wann, num_wann, nrpts)
-    for irpt in 1:nrpts
-        for i in 1:num_wann, j in 1:num_wann
-            toks = split(strip(lines[idx])); idx += 1
-            R1 = parse(Int, toks[1]); R2 = parse(Int, toks[2]); R3 = parse(Int, toks[3])
-            jj = parse(Int, toks[4]); ii = parse(Int, toks[5])
-            re = parse(Float64, toks[6]); im = parse(Float64, toks[7])
-            (j == 1 && i == 1) && (irvec[irpt] = (R1, R2, R3))
-            Hr[jj, ii, irpt] = complex(re, im)
+    open(path, "r") do io
+        readline(io)                           # skip header
+        num_wann = parse(Int, strip(readline(io)))
+        nrpts    = parse(Int, strip(readline(io)))
+        # ndegen: read nrpts integers across (15I5) wrapped lines
+        ndegen = Int[]
+        while length(ndegen) < nrpts
+            append!(ndegen, parse.(Int, split(readline(io))))
         end
+        length(ndegen) == nrpts ||
+            error("read_hr: parsed $(length(ndegen)) ndegen, expected $nrpts")
+        irvec = Vector{NTuple{3,Int}}(undef, nrpts)
+        Hr = zeros(ComplexF64, num_wann, num_wann, nrpts)
+        for irpt in 1:nrpts
+            for i in 1:num_wann, j in 1:num_wann
+                toks = split(readline(io))
+                R1 = parse(Int, toks[1]); R2 = parse(Int, toks[2]); R3 = parse(Int, toks[3])
+                jj = parse(Int, toks[4]); ii = parse(Int, toks[5])
+                re = parse(Float64, toks[6]); im = parse(Float64, toks[7])
+                (j == 1 && i == 1) && (irvec[irpt] = (R1, R2, R3))
+                Hr[jj, ii, irpt] = complex(re, im)
+            end
+        end
+        return num_wann, irvec, ndegen, Hr
     end
-    return num_wann, irvec, ndegen, Hr
 end
 
 # =============================================================================

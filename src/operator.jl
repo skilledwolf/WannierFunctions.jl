@@ -39,6 +39,27 @@ function Base.show(io::IO, ::MIME"text/plain", op::TBOperator)
 end
 
 """
+    fourier_q_to_R(Xq, kgrid, irvec) -> Xr
+
+The canonical k→R transform `Xr[:,:,ir] = (1/N_k) Σ_k e^{−i2πk·R} Xq[:,:,k]` on a given
+R-set. Every O(q)→O(R) setup in the package routes through here (or the multi-component
+wrapper [`fourier_to_R`](@ref)).
+"""
+function fourier_q_to_R(Xq::AbstractArray{ComplexF64,3}, kgrid::KGrid,
+                        irvec::Vector{NTuple{3,Int}})
+    nw, nk, nr = size(Xq, 1), size(Xq, 3), length(irvec)
+    Xr = zeros(ComplexF64, nw, nw, nr)
+    @maybe_threads (nr >= THREAD_MIN) for ir in 1:nr
+        R = SVector{3,Float64}(irvec[ir]...)
+        for q in 1:nk
+            fac = cis(-TWOPI * dot(kgrid.frac[q], R)) / nk
+            @views Xr[:, :, ir] .+= fac .* Xq[:, :, q]
+        end
+    end
+    return Xr
+end
+
+"""
     fourier_to_R(Ok, kgrid, irvec) -> OR
 
 Generic k→R transform of a matrix-valued operator: `OR[:,:,ir,c] = (1/N_k) Σ_k e^{-i2πk·R} Ok[:,:,k,c]`.
@@ -46,17 +67,29 @@ Generic k→R transform of a matrix-valued operator: `OR[:,:,ir,c] = (1/N_k) Σ_
 """
 function fourier_to_R(Ok::Array{ComplexF64,4}, kgrid::KGrid, irvec::Vector{NTuple{3,Int}})
     nw, _, nk, nc = size(Ok)
-    OR = zeros(ComplexF64, nw, nw, length(irvec), nc)
-    @maybe_threads (length(irvec) >= THREAD_MIN) for ir in 1:length(irvec)
-        R = SVector{3,Float64}(irvec[ir]...)
-        for k in 1:nk
-            fac = cis(-TWOPI * dot(kgrid.frac[k], R)) / nk
-            @views for c in 1:nc
-                OR[:, :, ir, c] .+= fac .* Ok[:, :, k, c]
-            end
-        end
+    OR = Array{ComplexF64,4}(undef, nw, nw, length(irvec), nc)
+    for c in 1:nc
+        OR[:, :, :, c] = fourier_q_to_R((@view Ok[:, :, :, c]), kgrid, irvec)
     end
     return OR
+end
+
+"real(tr(A·B)) without materialising A·B."
+function _retr_prod(A::AbstractMatrix, B::AbstractMatrix)
+    s = 0.0
+    @inbounds for j in axes(A, 2), i in axes(A, 1)
+        s += real(A[i, j] * B[j, i])
+    end
+    return s
+end
+
+"imag(tr(A·B)) without materialising A·B."
+function _imtr_prod(A::AbstractMatrix, B::AbstractMatrix)
+    s = 0.0
+    @inbounds for j in axes(A, 2), i in axes(A, 1)
+        s += imag(A[i, j] * B[j, i])
+    end
+    return s
 end
 
 "Evaluate the operator at fractional k: Σ_R e^{+i2πk·R} O(R)/ndegen(R)."

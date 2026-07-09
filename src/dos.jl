@@ -34,20 +34,23 @@ function density_of_states(bm::BerryModel; energies::AbstractVector{<:Real},
     kl = [SVector(i / kmesh[1], j / kmesh[2], k / kmesh[3])
           for i in 0:kmesh[1]-1 for j in 0:kmesh[2]-1 for k in 0:kmesh[3]-1]
     nch = spin === nothing ? 1 : 3            # total / up / down
-    acc = [zeros(ne, nch) for _ in 1:nktot]
-    Threads.@threads for idx in 1:nktot
-        _dos_kpoint!(acc[idx], bm, kl[idx], es, Δk, adaptive, adpt_fac, adpt_max, smr_width,
-                     spin, project, polar, azimuth, elec_per_state)
-    end
-    tot = sum(acc) ./ nktot
+    nw = num_wann(bm)
+    states = threaded_ksum(
+        (st, idx) -> _dos_kpoint!(st.acc, st.work, bm, kl[idx], es, Δk, adaptive, adpt_fac,
+                                  adpt_max, smr_width, spin, project, polar, azimuth,
+                                  elec_per_state),
+        () -> (work=BerryKWork(nw), acc=zeros(ne, nch)),
+        nktot)
+    tot = sum(st.acc for st in states) ./ nktot
     return spin === nothing ? (es, tot[:, 1]) : (es, tot[:, 1], tot[:, 2], tot[:, 3])
 end
 
-function _dos_kpoint!(out::Matrix{Float64}, bm::BerryModel, kf::SVector{3,Float64},
+function _dos_kpoint!(out::Matrix{Float64}, kwork::BerryKWork, bm::BerryModel,
+                      kf::SVector{3,Float64},
                       es::Vector{Float64}, Δk::Float64, adaptive::Bool, adpt_fac::Float64,
                       adpt_max::Float64, smr_width::Float64, spin, project,
                       polar::Float64, azimuth::Float64, elec_per_state::Int)
-    E, dE, U = eig_deleig_vec(bm, kf; deriv=adaptive)
+    E, dE, U = eig_deleig_vec!(kwork, bm, kf; deriv=adaptive)
     nw = length(E)
     binwidth = length(es) > 1 ? es[2] - es[1] : 1.0
     spn = spin === nothing ? nothing : _spin_diag(spin, kf, U; polar=polar, azimuth=azimuth)

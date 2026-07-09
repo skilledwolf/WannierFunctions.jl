@@ -12,10 +12,18 @@ function eig_deleig(bm::BerryModel, kfrac::AbstractVector; deriv::Bool=true)
 end
 
 "As `eig_deleig`, additionally returning the eigenvector matrix U (WF row, band column)."
-function eig_deleig_vec(bm::BerryModel, kfrac::AbstractVector; deriv::Bool=true)
+eig_deleig_vec(bm::BerryModel, kfrac::AbstractVector; deriv::Bool=true) =
+    eig_deleig_vec!(BerryKWork(num_wann(bm)), bm, kfrac; deriv=deriv)
+
+"In-place [`eig_deleig_vec`](@ref) reusing `w`'s buffers (for chunked k-loops)."
+function eig_deleig_vec!(w::BerryKWork, bm::BerryModel, kfrac::AbstractVector; deriv::Bool=true)
     nw = num_wann(bm)
-    H = zeros(ComplexF64, nw, nw)
-    dH = [zeros(ComplexF64, nw, nw) for _ in 1:3]
+    H = w.H
+    dH = w.dH
+    fill!(H, 0)
+    for c in 1:3
+        fill!(dH[c], 0)
+    end
     kf = SVector{3,Float64}(kfrac...)
     if bm.wsdist === nothing
         for ir in 1:length(bm.irvec)
@@ -33,10 +41,10 @@ function eig_deleig_vec(bm::BerryModel, kfrac::AbstractVector; deriv::Bool=true)
             nd0 = bm.ndegen[ir]
             for j in 1:nw, i in 1:nw
                 dl = bm.wsdist[i, j, ir]
-                w = 1.0 / (nd0 * length(dl))
+                wgt = 1.0 / (nd0 * length(dl))
                 h = bm.Hr[i, j, ir]
                 for Rt in dl
-                    ph = w * cis(TWOPI * dot(kf, SVector{3,Float64}(Rt...)))
+                    ph = wgt * cis(TWOPI * dot(kf, SVector{3,Float64}(Rt...)))
                     H[i, j] += ph * h
                     if deriv
                         Rc = bm.lattice.A * SVector{3,Float64}(Rt...)
@@ -48,14 +56,16 @@ function eig_deleig_vec(bm::BerryModel, kfrac::AbstractVector; deriv::Bool=true)
             end
         end
     end
-    F = eigen(Hermitian((H + H') / 2))
+    w.tmp .= (H .+ H') ./ 2
+    F = eigen!(Hermitian(w.tmp))
     E, U = F.values, F.vectors
     dE = zeros(3, nw)
     if deriv
         for c in 1:3
-            dHh = U' * dH[c] * U
+            mul!(w.tmp, U', dH[c])
+            mul!(w.dHh[c], w.tmp, U)
             for n in 1:nw
-                dE[c, n] = real(dHh[n, n])
+                dE[c, n] = real(w.dHh[c][n, n])
             end
         end
     end
@@ -105,8 +115,9 @@ function geninterp(bm::BerryModel, seedname::AbstractString; alsofirstder::Bool=
         end
         # rows in the reference '(I10,4G18.10)' / '(I10,7G18.10)' formats (geninterp.F90:411)
         g(x) = fortran_g(x, 18, 10)
+        w = BerryKWork(num_wann(bm))
         for (i, kf) in enumerate(kpts)
-            E, dE = eig_deleig(bm, kf; deriv=alsofirstder)
+            E, dE, _ = eig_deleig_vec!(w, bm, kf; deriv=alsofirstder)
             kcart = bm.lattice.B * kf
             for n in 1:length(E)
                 print(io, lpad(idx[i], 10), g(kcart[1]), g(kcart[2]), g(kcart[3]), g(E[n]))

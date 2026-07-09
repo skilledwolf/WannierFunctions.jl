@@ -16,10 +16,6 @@
 using LinearAlgebra
 using StaticArrays
 
-# CODATA2006 (matches the reference default build; see constants.jl for the bohr choice).
-const ELEM_CHARGE_SI = 1.602176487e-19
-const HBAR_SI = 1.054571628e-34
-
 const ALPHA_A = (2, 3, 1)     # i=1 → (y,z), 2 → (z,x), 3 → (x,y)
 const BETA_A = (3, 1, 2)
 
@@ -87,14 +83,7 @@ function BerryModel(chk::Checkpoint, eig::Matrix{Float64}, bv::Union{Nothing,BVe
     nr = length(irvec)
     Rcart = [lattice.A * SVector{3,Float64}(r...) for r in irvec]
 
-    Hr = zeros(ComplexF64, nw, nw, nr)
-    Threads.@threads for ir in 1:nr
-        R = SVector{3,Float64}(irvec[ir]...)
-        for q in 1:nk
-            fac = cis(-TWOPI * dot(kgrid.frac[q], R)) / nk
-            @views Hr[:, :, ir] .+= fac .* Hq[:, :, q]
-        end
-    end
+    Hr = fourier_q_to_R(Hq, kgrid, irvec)
 
     Ar = zeros(ComplexF64, nw, nw, nr, bv === nothing ? 0 : 3)
     if bv !== nothing && !transl_inv_full
@@ -110,14 +99,8 @@ function BerryModel(chk::Checkpoint, eig::Matrix{Float64}, bv::Union{Nothing,BVe
         for q in 1:nk, c in 1:3
             @views Aq[:, :, q, c] .= (Aq[:, :, q, c] .+ Aq[:, :, q, c]') ./ 2
         end
-        Threads.@threads for ir in 1:nr
-            R = SVector{3,Float64}(irvec[ir]...)
-            for q in 1:nk
-                fac = cis(-TWOPI * dot(kgrid.frac[q], R)) / nk
-                @views for c in 1:3
-                    Ar[:, :, ir, c] .+= fac .* Aq[:, :, q, c]
-                end
-            end
+        for c in 1:3
+            Ar[:, :, :, c] = fourier_q_to_R((@view Aq[:, :, :, c]), kgrid, irvec)
         end
     elseif bv !== nothing
         # transl_inv_full (one-shell translation-invariant scheme): e^{ib·r₀} phases per
@@ -235,28 +218,51 @@ function _scatter_ws(op::AbstractArray{ComplexF64,3}, irvec::Vector{NTuple{3,Int
     return out
 end
 
-"O(R) = (1/N_q) Σ_q e^{−i2πq·R} O(q) on a given R-set (one nw×nw×nk operator stack)."
-function fourier_q_to_R(Xq::AbstractArray{ComplexF64,3}, kgrid::KGrid,
-                        irvec::Vector{NTuple{3,Int}})
-    nw, nk, nr = size(Xq, 1), size(Xq, 3), length(irvec)
-    Xr = zeros(ComplexF64, nw, nw, nr)
-    Threads.@threads for ir in 1:nr
-        R = SVector{3,Float64}(irvec[ir]...)
-        for q in 1:nk
-            fac = cis(-TWOPI * dot(kgrid.frac[q], R)) / nk
-            @views Xr[:, :, ir] .+= fac .* Xq[:, :, q]
-        end
-    end
-    return Xr
+"""
+    BerryKWork(nw)
+
+Per-task scratch for the k-space interpolation kernels: the accumulation targets of
+`_berry_kdata!` (`H`, `dH`, `A`, `Ω̄`, `dHh`) plus the occupation-dependent buffers of
+`_imf_occ!`/`_imfgh_occ` (`f`, `Hh`, `JJp`, `JJm`, `occ`, `tmp`). Allocate one per chunk
+task (see `threaded_ksum`) and reuse it for every k-point in the chunk — the per-k kernels
+are then allocation-free apart from the eigendecomposition.
+"""
+struct BerryKWork
+    H::Matrix{ComplexF64}
+    dH::Vector{Matrix{ComplexF64}}
+    A::Vector{Matrix{ComplexF64}}
+    Ω̄::Vector{Matrix{ComplexF64}}
+    dHh::Vector{Matrix{ComplexF64}}
+    Hh::Matrix{ComplexF64}                  # H in the Hamiltonian gauge (morb)
+    f::Matrix{ComplexF64}                   # occupation matrix in the Wannier gauge
+    JJp::Vector{Matrix{ComplexF64}}
+    JJm::Vector{Matrix{ComplexF64}}
+    occ::Vector{Float64}
+    tmp::Matrix{ComplexF64}
 end
+BerryKWork(nw::Int) = BerryKWork(
+    zeros(ComplexF64, nw, nw), [zeros(ComplexF64, nw, nw) for _ in 1:3],
+    [zeros(ComplexF64, nw, nw) for _ in 1:3], [zeros(ComplexF64, nw, nw) for _ in 1:3],
+    [zeros(ComplexF64, nw, nw) for _ in 1:3], zeros(ComplexF64, nw, nw),
+    zeros(ComplexF64, nw, nw), [zeros(ComplexF64, nw, nw) for _ in 1:3],
+    [zeros(ComplexF64, nw, nw) for _ in 1:3], zeros(nw), zeros(ComplexF64, nw, nw))
 
 "Interpolated k-space data shared by all Fermi levels at one k: E, U, A, Ω̄, rotated velocity."
-function _berry_kdata(bm::BerryModel, kfrac::AbstractVector)
+_berry_kdata(bm::BerryModel, kfrac::AbstractVector) =
+    _berry_kdata!(BerryKWork(num_wann(bm)), bm, kfrac)
+
+"In-place [`_berry_kdata`](@ref): accumulates into `w` and returns a NamedTuple whose
+`A`/`Ω̄`/`dHh` alias `w`'s buffers (valid until the next `_berry_kdata!` call on `w`)."
+function _berry_kdata!(w::BerryKWork, bm::BerryModel, kfrac::AbstractVector)
     nw = num_wann(bm)
-    H = zeros(ComplexF64, nw, nw)
-    dH = [zeros(ComplexF64, nw, nw) for _ in 1:3]
-    A = [zeros(ComplexF64, nw, nw) for _ in 1:3]
-    Ω̄ = [zeros(ComplexF64, nw, nw) for _ in 1:3]
+    H = w.H
+    dH = w.dH
+    A = w.A
+    Ω̄ = w.Ω̄
+    fill!(H, 0)
+    for c in 1:3
+        fill!(dH[c], 0); fill!(A[c], 0); fill!(Ω̄[c], 0)
+    end
     kf = SVector{3,Float64}(kfrac...)
     if bm.wsdist === nothing
         for ir in 1:length(bm.irvec)
@@ -285,9 +291,9 @@ function _berry_kdata(bm::BerryModel, kfrac::AbstractVector)
             nd0 = bm.ndegen[ir]
             for j in 1:nw, i in 1:nw
                 dl = bm.wsdist[i, j, ir]
-                w = 1.0 / (nd0 * length(dl))
+                wgt = 1.0 / (nd0 * length(dl))
                 for Rt in dl
-                    ph = w * cis(TWOPI * dot(kf, SVector{3,Float64}(Rt...)))
+                    ph = wgt * cis(TWOPI * dot(kf, SVector{3,Float64}(Rt...)))
                     Rc = bm.lattice.A * SVector{3,Float64}(Rt...)
                     h = bm.Hr[i, j, ir]
                     H[i, j] += ph * h
@@ -308,37 +314,93 @@ function _berry_kdata(bm::BerryModel, kfrac::AbstractVector)
             end
         end
     end
-    F = eigen(Hermitian((H + H') / 2))
+    w.tmp .= (H .+ H') ./ 2
+    F = eigen!(Hermitian(w.tmp))
     E, U = F.values, F.vectors
-    dHh = [U' * dH[c] * U for c in 1:3]     # velocity in the Hamiltonian gauge
+    dHh = w.dHh                             # velocity in the Hamiltonian gauge
+    for c in 1:3
+        mul!(w.tmp, U', dH[c])
+        mul!(dHh[c], w.tmp, U)
+    end
     return (; E, U, A, Ω̄, dHh)
+end
+
+"ws-aware operator interpolation O(k) from O(R) (shared by the spin/SHC/morb operators)."
+function _ft_op(bm::BerryModel, Or::AbstractArray{ComplexF64,3}, kf::SVector{3,Float64})
+    return _ft_op!(zeros(ComplexF64, size(Or, 1), size(Or, 2)), bm, Or, kf)
+end
+
+"In-place [`_ft_op`](@ref): accumulate into a zeroed-by-us output buffer `O`."
+function _ft_op!(O::Matrix{ComplexF64}, bm::BerryModel, Or::AbstractArray{ComplexF64,3},
+                 kf::SVector{3,Float64})
+    nw = size(Or, 1)
+    fill!(O, 0)
+    if bm.wsdist === nothing
+        for ir in 1:length(bm.irvec)
+            fac = cis(TWOPI * dot(kf, SVector{3,Float64}(bm.irvec[ir]...))) / bm.ndegen[ir]
+            @views O .+= fac .* Or[:, :, ir]
+        end
+    else
+        for ir in 1:length(bm.irvec)
+            nd0 = bm.ndegen[ir]
+            for j in 1:nw, i in 1:nw
+                dl = bm.wsdist[i, j, ir]
+                w = 1.0 / (nd0 * length(dl))
+                o = Or[i, j, ir]
+                for Rt in dl
+                    O[i, j] += w * cis(TWOPI * dot(kf, SVector{3,Float64}(Rt...))) * o
+                end
+            end
+        end
+    end
+    return O
 end
 
 "Occupied-manifold curvature (J0+J1+J2, Ų) at one Fermi level from shared k-data."
 _imf_kdata(kd, fermi_energy::Float64) = _imf_occ(kd, Float64.(kd.E .< fermi_energy))
 
-function _imf_occ(kd, occ::Vector{Float64})
+"As `_imf_kdata`, reusing `w`'s occupation/JJ buffers (the kdata buffers are untouched)."
+function _imf_kdata!(w::BerryKWork, kd, fermi_energy::Float64)
+    map!(e -> Float64(e < fermi_energy), w.occ, kd.E)
+    return _imf_occ!(w, kd, w.occ)
+end
+
+_imf_occ(kd, occ::Vector{Float64}) = _imf_occ!(BerryKWork(length(kd.E)), kd, occ)
+
+"""
+Build the J± energy-denominator matrices (velocity/(E_m−E_n) between occupied and empty
+states, rotated back to the Wannier gauge) into `JJp`/`JJm`, using `tmp` as gemm scratch.
+Shared by the Berry-curvature (`_imf_occ!`) and orbital-magnetisation (`_imfgh_occ`) traces.
+"""
+function _jj_matrices!(JJp, JJm, tmp, kd, occ::Vector{Float64})
     E, U = kd.E, kd.U
     nw = length(E)
-    f = U * Diagonal(occ) * U'
-    JJp = [zeros(ComplexF64, nw, nw) for _ in 1:3]
-    JJm = [zeros(ComplexF64, nw, nw) for _ in 1:3]
     for c in 1:3
+        Jp, Jm = JJp[c], JJm[c]
+        fill!(Jp, 0); fill!(Jm, 0)
         for m in 1:nw, n in 1:nw
             if occ[n] < 0.5 && occ[m] > 0.5                     # n empty, m occupied
-                JJp[c][n, m] = im * kd.dHh[c][n, m] / (E[m] - E[n])
-                JJm[c][m, n] = im * kd.dHh[c][m, n] / (E[n] - E[m])
+                Jp[n, m] = im * kd.dHh[c][n, m] / (E[m] - E[n])
+                Jm[m, n] = im * kd.dHh[c][m, n] / (E[n] - E[m])
             end
         end
-        JJp[c] = U * JJp[c] * U'
-        JJm[c] = U * JJm[c] * U'
+        mul!(tmp, U, Jp); mul!(Jp, tmp, U')
+        mul!(tmp, U, Jm); mul!(Jm, tmp, U')
     end
+    return nothing
+end
+
+function _imf_occ!(w::BerryKWork, kd, occ::Vector{Float64})
+    U = kd.U
+    w.tmp .= U .* occ'                      # U · diag(occ)
+    mul!(w.f, w.tmp, U')                    # occupation matrix in the Wannier gauge
+    _jj_matrices!(w.JJp, w.JJm, w.tmp, kd, occ)
     imf = MVector{3,Float64}(0, 0, 0)
     for i in 1:3
         α, β = ALPHA_A[i], BETA_A[i]
-        J0 = real(tr(f * kd.Ω̄[i]))
-        J1 = -2.0 * (imag(tr(kd.A[α] * JJp[β])) + imag(tr(JJm[α] * kd.A[β])))
-        J2 = -2.0 * imag(tr(JJm[α] * JJp[β]))
+        J0 = _retr_prod(w.f, kd.Ω̄[i])
+        J1 = -2.0 * (_imtr_prod(kd.A[α], w.JJp[β]) + _imtr_prod(w.JJm[α], kd.A[β]))
+        J2 = -2.0 * _imtr_prod(w.JJm[α], w.JJp[β])
         imf[i] = J0 + J1 + J2
     end
     return SVector(imf)
@@ -377,34 +439,42 @@ function ahc_fermiscan(bm::BerryModel; fermi_energies::Vector{Float64},
     kl = [SVector(i / kmesh[1], j / kmesh[2], k / kmesh[3])
           for i in 0:kmesh[1]-1 for j in 0:kmesh[2]-1 for k in 0:kmesh[3]-1]
     kw = 1.0 / nktot
-    per_k = Vector{Matrix{Float64}}(undef, nktot)
-    Threads.@threads for idx in 1:nktot
-        acc = zeros(3, nf)
-        kd = _berry_kdata(bm, kl[idx])
-        ladpt = falses(nf)
-        for (ife, ef) in enumerate(fermi_energies)
-            imf = _imf_kdata(kd, ef)
-            if na > 1 && norm(imf) > adpt_thresh
-                ladpt[ife] = true                       # coarse value discarded
-            else
-                acc[:, ife] .+= imf .* kw
-            end
-        end
-        if any(ladpt)
-            kwa = kw / na^3
-            for off in adkpt
-                kda = _berry_kdata(bm, kl[idx] + off)
-                for (ife, ef) in enumerate(fermi_energies)
-                    ladpt[ife] || continue
-                    acc[:, ife] .+= _imf_kdata(kda, ef) .* kwa
-                end
-            end
-        end
-        per_k[idx] = acc
-    end
-    imf_tot = sum(per_k)
+    nw = num_wann(bm)
+    states = threaded_ksum(
+        (st, idx) -> _ahc_kpoint!(st, bm, kl[idx], fermi_energies, adkpt, na, kw, adpt_thresh),
+        () -> (work=BerryKWork(nw), acc=zeros(3, nf), ladpt=falses(nf)),
+        nktot)
+    imf_tot = sum(st.acc for st in states)
     fac = -1.0e8 * ELEM_CHARGE_SI^2 / (HBAR_SI * cell_volume(bm.lattice))
     return fac .* imf_tot
+end
+
+# Per-k body of ahc_fermiscan (top-level: closure-boxing hazard in threaded bodies).
+function _ahc_kpoint!(st, bm::BerryModel, kf::SVector{3,Float64}, efs::Vector{Float64},
+                      adkpt::Vector{SVector{3,Float64}}, na::Int, kw::Float64,
+                      adpt_thresh::Float64)
+    kd = _berry_kdata!(st.work, bm, kf)
+    ladpt = st.ladpt
+    fill!(ladpt, false)
+    for (ife, ef) in enumerate(efs)
+        imf = _imf_kdata!(st.work, kd, ef)
+        if na > 1 && norm(imf) > adpt_thresh
+            ladpt[ife] = true                           # coarse value discarded
+        else
+            @views st.acc[:, ife] .+= imf .* kw
+        end
+    end
+    if any(ladpt)
+        kwa = kw / na^3
+        for off in adkpt
+            kda = _berry_kdata!(st.work, bm, kf + off)
+            for (ife, ef) in enumerate(efs)
+                ladpt[ife] || continue
+                @views st.acc[:, ife] .+= _imf_kdata!(st.work, kda, ef) .* kwa
+            end
+        end
+    end
+    return nothing
 end
 
 """

@@ -99,10 +99,12 @@ function kpath(m::Union{BerryModel,MorbModel,ShcModel};
     shc = :shc in tasks ? Vector{Float64}(undef, np) : nothing
 
     ef = fermi_energy === nothing ? 0.0 : fermi_energy
-    Threads.@threads for p in 1:np
-        _kpath_kpoint!(bands, colour, curv, morb, shc, p, m, bm, kpts[p], bands_colour, ef,
-                       ucnv, polar, azimuth, spin, γ, α, β, smr_width, eigval_max)
-    end
+    threaded_ksum(
+        (st, p) -> _kpath_kpoint!(bands, colour, curv, morb, shc, p, m, bm, kpts[p],
+                                  bands_colour, ef, ucnv, polar, azimuth, spin, γ, α, β,
+                                  smr_width, eigval_max, st.work),
+        () -> (work=BerryKWork(nw),),
+        np)
     return (; kpts, xvals, bands, colour, curv, morb, shc)
 end
 
@@ -111,9 +113,10 @@ end
 function _kpath_kpoint!(bands, colour, curv, morb, shc, p::Int, m, bm::BerryModel,
                         kf::SVector{3,Float64}, bands_colour::Symbol, ef::Float64,
                         ucnv::Float64, polar::Float64, azimuth::Float64, spin,
-                        γ::Int, α::Int, β::Int, smr_width::Float64, eigval_max::Float64)
+                        γ::Int, α::Int, β::Int, smr_width::Float64, eigval_max::Float64,
+                        w::BerryKWork=BerryKWork(num_wann(bm)))
     if bands !== nothing
-        E, _, U = eig_deleig_vec(bm, kf; deriv=false)
+        E, _, U = eig_deleig_vec!(w, bm, kf; deriv=false)
         bands[:, p] = E
         if bands_colour == :spin
             spn = _spin_diag(spin, kf, U; polar=polar, azimuth=azimuth)
@@ -121,14 +124,14 @@ function _kpath_kpoint!(bands, colour, curv, morb, shc, p::Int, m, bm::BerryMode
         end
     end
     if morb !== nothing
-        f, g, h = _imfgh_kdata(m, kf, ef)
+        f, g, h = _imfgh_kdata(m, kf, ef, w)
         morb[:, p] = -(g .+ h .- 2.0 * ef .* f) ./ 2.0
         curv !== nothing && (curv[:, p] = -ucnv .* f)
     elseif curv !== nothing
-        curv[:, p] = -ucnv .* _imf_kdata(_berry_kdata(bm, kf), ef)
+        curv[:, p] = -ucnv .* _imf_kdata!(w, _berry_kdata!(w, bm, kf), ef)
     end
     if shc !== nothing || bands_colour == :shc
-        E, ω = _shc_k_band(m, kf, 0.0, γ, α, β, false, 0.0, 0.0, smr_width, eigval_max)
+        E, ω = _shc_k_band(m, kf, 0.0, γ, α, β, false, 0.0, 0.0, smr_width, eigval_max, w)
         shc !== nothing &&
             (shc[p] = sum(Float64(E[n] < ef) * ω[n] for n in 1:length(E)) * ucnv)
         bands_colour == :shc && (colour[:, p] = ω .* ucnv)

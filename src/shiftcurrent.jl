@@ -11,8 +11,6 @@ using LinearAlgebra
 using StaticArrays
 using Printf
 
-const EV_SECONDS = 6.582119e-16          # ħ/e in eV·s — CODATA2006 set (7 digits!)
-
 # (b,c) packing of the 6 symmetric polarisation pairs: xx yy zz xy xz yz
 const ALPHA_SC = (1, 2, 3, 1, 1, 2)
 const BETA_SC = (1, 2, 3, 2, 3, 3)
@@ -43,14 +41,15 @@ function shift_current(bm::BerryModel, centres::AbstractMatrix;
     nktot = prod(kmesh)
     kl = [SVector(i / kmesh[1], j / kmesh[2], k / kmesh[3])
           for i in 0:kmesh[1]-1 for j in 0:kmesh[2]-1 for k in 0:kmesh[3]-1]
-    per_k = Vector{Array{Float64,3}}(undef, nktot)
-    Threads.@threads for idx in 1:nktot
-        per_k[idx] = _sc_kpoint(ops, kl[idx], freqs, fermi_energy, Δk, sc_eta, w_thr,
-                                eta_corr, adaptive, adpt_fac, adpt_max, smr_width, eigval_max)
-    end
+    states = threaded_ksum(
+        (st, idx) -> _sc_kpoint!(st.acc, ops, kl[idx], freqs, fermi_energy, Δk, sc_eta,
+                                 w_thr, eta_corr, adaptive, adpt_fac, adpt_max, smr_width,
+                                 eigval_max),
+        () -> (acc=zeros(3, 6, nfreq),),
+        nktot)
     fac = EV_SECONDS * pi * ELEM_CHARGE_SI^3 /
           (4.0 * HBAR_SI^2 * cell_volume(bm.lattice)) / nktot
-    return (; freqs, sc=fac .* sum(per_k))
+    return (; freqs, sc=fac .* sum(st.acc for st in states))
 end
 
 """
@@ -149,13 +148,13 @@ function _sc_gather(ops::_ScOps, kf::SVector{3,Float64})
     return HH, HHda, HHdadb, AA, AAda
 end
 
-function _sc_kpoint(ops::_ScOps, kf::SVector{3,Float64}, ω::Vector{Float64}, ef::Float64,
-                    Δk::Float64, sc_eta::Float64, w_thr::Float64, eta_corr::Bool,
-                    adaptive::Bool, adpt_fac::Float64, adpt_max::Float64,
-                    smr_width::Float64, eigval_max::Float64)
+function _sc_kpoint!(out::Array{Float64,3}, ops::_ScOps, kf::SVector{3,Float64},
+                     ω::Vector{Float64}, ef::Float64,
+                     Δk::Float64, sc_eta::Float64, w_thr::Float64, eta_corr::Bool,
+                     adaptive::Bool, adpt_fac::Float64, adpt_max::Float64,
+                     smr_width::Float64, eigval_max::Float64)
     nw = size(ops.Hr, 1)
     nfreq = length(ω)
-    out = zeros(3, 6, nfreq)
     HH, HHda, HHdadb, AA, AAda = _sc_gather(ops, kf)
     F = eigen(Hermitian(HH))
     E, U = F.values, F.vectors

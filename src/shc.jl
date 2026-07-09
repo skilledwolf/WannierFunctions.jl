@@ -105,18 +105,12 @@ function ShcModel(seedname::AbstractString; scissors_shift::Float64=0.0,
     SHr = zeros(ComplexF64, nw, nw, nr, 3)
     SRr = zeros(ComplexF64, nw, nw, nr, 3, 3)
     SHRr = zeros(ComplexF64, nw, nw, nr, 3, 3)
-    Threads.@threads for ir in 1:nr
-        R = SVector{3,Float64}(bm.irvec[ir]...)
-        for q in 1:nk
-            fac = cis(-TWOPI * dot(kgrid.frac[q], R)) / nk
-            @views for s in 1:3
-                SSr[:, :, ir, s] .+= fac .* SSq[:, :, q, s]
-                SHr[:, :, ir, s] .+= fac .* SHq[:, :, q, s]
-                for α in 1:3
-                    SRr[:, :, ir, s, α] .+= (im * fac) .* SRq[:, :, q, s, α]
-                    SHRr[:, :, ir, s, α] .+= (im * fac) .* SHRq[:, :, q, s, α]
-                end
-            end
+    for s in 1:3
+        SSr[:, :, :, s] = fourier_q_to_R((@view SSq[:, :, :, s]), kgrid, bm.irvec)
+        SHr[:, :, :, s] = fourier_q_to_R((@view SHq[:, :, :, s]), kgrid, bm.irvec)
+        for α in 1:3
+            SRr[:, :, :, s, α] = im .* fourier_q_to_R((@view SRq[:, :, :, s, α]), kgrid, bm.irvec)
+            SHRr[:, :, :, s, α] = im .* fourier_q_to_R((@view SHRq[:, :, :, s, α]), kgrid, bm.irvec)
         end
     end
     return ShcModel(bm, SSr, SHr, SRr, SHRr)
@@ -321,31 +315,6 @@ function _bvec_canonical_slots(bv::BVectors)
     return slot
 end
 
-"ws-aware operator interpolation O(k) from O(R) (shared by all SHC operators)."
-function _ft_op(bm::BerryModel, Or::AbstractArray{ComplexF64,3}, kf::SVector{3,Float64})
-    nw = size(Or, 1)
-    O = zeros(ComplexF64, nw, nw)
-    if bm.wsdist === nothing
-        for ir in 1:length(bm.irvec)
-            fac = cis(TWOPI * dot(kf, SVector{3,Float64}(bm.irvec[ir]...))) / bm.ndegen[ir]
-            @views O .+= fac .* Or[:, :, ir]
-        end
-    else
-        for ir in 1:length(bm.irvec)
-            nd0 = bm.ndegen[ir]
-            for j in 1:nw, i in 1:nw
-                dl = bm.wsdist[i, j, ir]
-                w = 1.0 / (nd0 * length(dl))
-                o = Or[i, j, ir]
-                for Rt in dl
-                    O[i, j] += w * cis(TWOPI * dot(kf, SVector{3,Float64}(Rt...))) * o
-                end
-            end
-        end
-    end
-    return O
-end
-
 """
     shc_fermiscan(sm; fermi_energies, kmesh, γ=3, α=1, β=2, adaptive=true,
                   adpt_fac=√2, adpt_max=1.0, smr_width=0.0, eigval_max=Inf)
@@ -364,28 +333,36 @@ function shc_fermiscan(sm::ShcModel; fermi_energies::Vector{Float64},
     Δk = kmesh_spacing(bm.lattice, kmesh)
     kl = [SVector(i / kmesh[1], j / kmesh[2], k / kmesh[3])
           for i in 0:kmesh[1]-1 for j in 0:kmesh[2]-1 for k in 0:kmesh[3]-1]
-    per_k = Vector{Vector{Float64}}(undef, nktot)
-    Threads.@threads for idx in 1:nktot
-        per_k[idx] = _shc_kpoint(sm, kl[idx], fermi_energies, Δk, γ, α, β,
-                                 adaptive, adpt_fac, adpt_max, smr_width, eigval_max)
-    end
+    states = threaded_ksum(
+        (st, idx) -> _shc_kpoint!(st.acc, sm, kl[idx], fermi_energies, Δk, γ, α, β,
+                                  adaptive, adpt_fac, adpt_max, smr_width, eigval_max,
+                                  st.work),
+        () -> (work=BerryKWork(nw), acc=zeros(nf)),
+        nktot)
     fac = 1.0e8 * ELEM_CHARGE_SI^2 / (HBAR_SI * cell_volume(bm.lattice)) / 2.0
-    return (fac / nktot) .* sum(per_k)
+    return (fac / nktot) .* sum(st.acc for st in states)
 end
 
-function _shc_kpoint(sm::ShcModel, kf::SVector{3,Float64}, efs::Vector{Float64}, Δk::Float64,
-                     γ::Int, α::Int, β::Int, adaptive::Bool, adpt_fac::Float64,
-                     adpt_max::Float64, smr_width::Float64, eigval_max::Float64)
-    E, ω = _shc_k_band(sm, kf, Δk, γ, α, β, adaptive, adpt_fac, adpt_max, smr_width, eigval_max)
+function _shc_kpoint!(acc::Vector{Float64}, sm::ShcModel, kf::SVector{3,Float64},
+                      efs::Vector{Float64}, Δk::Float64,
+                      γ::Int, α::Int, β::Int, adaptive::Bool, adpt_fac::Float64,
+                      adpt_max::Float64, smr_width::Float64, eigval_max::Float64,
+                      w::BerryKWork)
+    E, ω = _shc_k_band(sm, kf, Δk, γ, α, β, adaptive, adpt_fac, adpt_max, smr_width,
+                       eigval_max, w)
     nw = length(E)
-    return [sum(Float64(E[n] < ef) * ω[n] for n in 1:nw) for ef in efs]
+    for (ife, ef) in enumerate(efs)
+        acc[ife] += sum(Float64(E[n] < ef) * ω[n] for n in 1:nw)
+    end
+    return nothing
 end
 
 "Common per-k SHC data: kd, band energies/velocities, D_h, AA_β, and the js matrix."
-function _shc_k_setup(sm, kf::SVector{3,Float64}, γ::Int, α::Int, β::Int)
+function _shc_k_setup(sm, kf::SVector{3,Float64}, γ::Int, α::Int, β::Int,
+                      w::BerryKWork=BerryKWork(num_wann(sm.bm)))
     bm = sm.bm
     nw = num_wann(bm)
-    kd = _berry_kdata(bm, kf)
+    kd = _berry_kdata!(w, bm, kf)
     E = kd.E
     dE = [real(kd.dHh[c][n, n]) for c in 1:3, n in 1:nw]
     Dh = [zeros(ComplexF64, nw, nw) for _ in 1:3]
@@ -436,8 +413,9 @@ end
 "Band-resolved SHC k-term ω_n = Ω^{spin γ}_{n,αβ}(k) (Ų, no occupation factor) and energies."
 function _shc_k_band(sm::Union{ShcModel,ShcRyooModel}, kf::SVector{3,Float64}, Δk::Float64,
                      γ::Int, α::Int, β::Int, adaptive::Bool, adpt_fac::Float64,
-                     adpt_max::Float64, smr_width::Float64, eigval_max::Float64)
-    E, dE, AAβ, js = _shc_k_setup(sm, kf, γ, α, β)
+                     adpt_max::Float64, smr_width::Float64, eigval_max::Float64,
+                     w::BerryKWork=BerryKWork(num_wann(sm.bm)))
+    E, dE, AAβ, js = _shc_k_setup(sm, kf, γ, α, β, w)
     nw = length(E)
     ω = zeros(nw)
     for n in 1:nw
@@ -487,25 +465,28 @@ function shc_freqscan(sm::Union{ShcModel,ShcRyooModel}; freqs::Vector{Float64},
                       adaptive::Bool=true, adpt_fac::Float64=sqrt(2.0), adpt_max::Float64=1.0,
                       smr_width::Float64=0.0, eigval_max::Float64=Inf)
     bm = sm.bm
+    nw = num_wann(bm)
     nktot = prod(kmesh)
     Δk = kmesh_spacing(bm.lattice, kmesh)
     kl = [SVector(i / kmesh[1], j / kmesh[2], k / kmesh[3])
           for i in 0:kmesh[1]-1 for j in 0:kmesh[2]-1 for k in 0:kmesh[3]-1]
-    per_k = Vector{Vector{ComplexF64}}(undef, nktot)
-    Threads.@threads for idx in 1:nktot
-        per_k[idx] = _shc_k_freq(sm, kl[idx], freqs, fermi_energy, Δk, γ, α, β,
-                                 adaptive, adpt_fac, adpt_max, smr_width, eigval_max)
-    end
+    states = threaded_ksum(
+        (st, idx) -> _shc_k_freq!(st.acc, sm, kl[idx], freqs, fermi_energy, Δk, γ, α, β,
+                                  adaptive, adpt_fac, adpt_max, smr_width, eigval_max,
+                                  st.work),
+        () -> (work=BerryKWork(nw), acc=zeros(ComplexF64, length(freqs))),
+        nktot)
     fac = 1.0e8 * ELEM_CHARGE_SI^2 / (HBAR_SI * cell_volume(bm.lattice)) / 2.0
-    return (fac / nktot) .* sum(per_k)
+    return (fac / nktot) .* sum(st.acc for st in states)
 end
 
-function _shc_k_freq(sm, kf::SVector{3,Float64}, freqs::Vector{Float64}, ef::Float64,
-                     Δk::Float64, γ::Int, α::Int, β::Int, adaptive::Bool, adpt_fac::Float64,
-                     adpt_max::Float64, smr_width::Float64, eigval_max::Float64)
-    E, dE, AAβ, js = _shc_k_setup(sm, kf, γ, α, β)
+function _shc_k_freq!(ωl::Vector{ComplexF64}, sm, kf::SVector{3,Float64},
+                      freqs::Vector{Float64}, ef::Float64,
+                      Δk::Float64, γ::Int, α::Int, β::Int, adaptive::Bool, adpt_fac::Float64,
+                      adpt_max::Float64, smr_width::Float64, eigval_max::Float64,
+                      w::BerryKWork)
+    E, dE, AAβ, js = _shc_k_setup(sm, kf, γ, α, β, w)
     nw = length(E)
-    ωl = zeros(ComplexF64, length(freqs))
     for n in 1:nw
         (E[n] > eigval_max || E[n] >= ef) && continue        # occupation on n only
         for m in 1:nw

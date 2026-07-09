@@ -35,15 +35,7 @@ function slwf_omega(Mrot::Array{ComplexF64,4}, bv::BVectors, slwf::SLWF)
     invNk = 1.0 / nk
     S = slwf.num
     λ = slwf.constrain ? slwf.lambda : 0.0
-    # centres (all WFs, standard MV definition)
-    r = zeros(3, nw)
-    for k in 1:nk, b in 1:nntot
-        w = bv.wb[b, k]
-        bb = SVector(bv.bvec[1, b, k], bv.bvec[2, b, k], bv.bvec[3, b, k])
-        for n in 1:nw
-            r[:, n] .-= (invNk * w * imag(log(Mrot[n, n, b, k]))) .* bb
-        end
-    end
+    r = slwf_centres(Mrot, bv)
     om_iod = 0.0; om_d = 0.0; om_nu = 0.0
     for k in 1:nk, b in 1:nntot
         w = bv.wb[b, k]
@@ -71,6 +63,22 @@ function slwf_omega(Mrot::Array{ComplexF64,4}, bv::BVectors, slwf::SLWF)
     return (; ΩC=om_iod + om_d + om_nu, centres=r)
 end
 
+"Standard MV Wannier centres of all WFs from the gauge-rotated overlaps (shared by the
+SLWF+C objective and gradient — the gradient needs only the centres, not the full Ω_C)."
+function slwf_centres(Mrot::Array{ComplexF64,4}, bv::BVectors)
+    nw = size(Mrot, 1); nntot = size(Mrot, 3); nk = size(Mrot, 4)
+    invNk = 1.0 / nk
+    r = zeros(3, nw)
+    for k in 1:nk, b in 1:nntot
+        w = bv.wb[b, k]
+        bb = SVector(bv.bvec[1, b, k], bv.bvec[2, b, k], bv.bvec[3, b, k])
+        for n in 1:nw
+            r[:, n] .-= (invNk * w * imag(log(Mrot[n, n, b, k]))) .* bb
+        end
+    end
+    return r
+end
+
 """
     slwf_gradient(Mrot, bv, slwf) -> G
 
@@ -85,24 +93,33 @@ function slwf_gradient(Mrot::Array{ComplexF64,4}, bv::BVectors, slwf::SLWF)
     λ = slwf.constrain ? slwf.lambda : 0.0
     im2 = complex(0.0, -0.5)
     # centres r̄_n (standard MV) from Mrot
-    r = slwf_omega(Mrot, bv, slwf).centres
+    r = slwf_centres(Mrot, bv)
     G = zeros(ComplexF64, nw, nw, nk)
+    # per-(k,b) scratch, reused across the whole double loop
+    lnt = zeros(nw)
+    rnkb = zeros(nw)
+    r0kb = zeros(nw)
+    crt = Matrix{ComplexF64}(undef, nw, nw)
+    cr = Matrix{ComplexF64}(undef, nw, nw)
     for k in 1:nk
         for b in 1:nntot
             w = bv.wb[b, k]
             bb = SVector(bv.bvec[1, b, k], bv.bvec[2, b, k], bv.bvec[3, b, k])
             Mk = @view Mrot[:, :, b, k]
-            lnt = [w * imag(log(Mk[n, n])) for n in 1:nw]
-            rnkb = [bb[1] * r[1, n] + bb[2] * r[2, n] + bb[3] * r[3, n] for n in 1:nw]
-            r0kb = zeros(nw)
+            for n in 1:nw
+                lnt[n] = w * imag(log(Mk[n, n]))
+                rnkb[n] = bb[1] * r[1, n] + bb[2] * r[2, n] + bb[3] * r[3, n]
+            end
             if slwf.constrain
                 for n in 1:S
                     r0kb[n] = bb[1] * slwf.centres[1, n] + bb[2] * slwf.centres[2, n] +
                               bb[3] * slwf.centres[3, n]
                 end
             end
-            crt = [Mk[m, n] / Mk[n, n] for m in 1:nw, n in 1:nw]
-            cr = [Mk[m, n] * conj(Mk[n, n]) for m in 1:nw, n in 1:nw]
+            for n in 1:nw, m in 1:nw
+                crt[m, n] = Mk[m, n] / Mk[n, n]
+                cr[m, n] = Mk[m, n] * conj(Mk[n, n])
+            end
             for n in 1:nw, m in 1:nw
                 if m <= S && n <= S
                     g = w * 0.5 * (cr[m, n] - conj(cr[n, m]))

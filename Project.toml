@@ -17,14 +17,19 @@ DFTK = "acf6eb54-70d9-11e9-0013-234b7a5f5337"
 WannierFunctionsDFTKExt = "DFTK"
 
 [compat]
+Aqua = "0.8"
 DFTK = "0.6, 0.7"
+LinearAlgebra = "1"
 Logging = "1"
 PrecompileTools = "1"
+Printf = "1"
 StaticArrays = "1"
+Test = "1"
 julia = "1.10"
 
 [extras]
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test"]
+test = ["Aqua", "Test"]

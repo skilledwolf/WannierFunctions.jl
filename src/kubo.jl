@@ -62,51 +62,66 @@ function optical_conductivity(bm::BerryModel; fermi_energy::Float64,
 
     kl = [SVector(i / kmesh[1], j / kmesh[2], k / kmesh[3])
           for i in 0:kmesh[1]-1 for j in 0:kmesh[2]-1 for k in 0:kmesh[3]-1]
-    accH = [zeros(ComplexF64, 3, 3, nf) for _ in 1:nktot]
-    accAH = [zeros(ComplexF64, 3, 3, nf) for _ in 1:nktot]
-    accJ = [zeros(nf) for _ in 1:nktot]
+    states = threaded_ksum(
+        (st, idx) -> _kubo_kpoint!(st, bm, kl[idx], fermi_energy, ωs, Δk, eigval_max,
+                                   adaptive, adpt_fac, adpt_max, smr_width),
+        () -> (work=BerryKWork(nw), H=zeros(ComplexF64, 3, 3, nf),
+               AH=zeros(ComplexF64, 3, 3, nf), J=zeros(nf),
+               A=[zeros(ComplexF64, nw, nw) for _ in 1:3]),
+        nktot)
+    fac = 1.0e8 * ELEM_CHARGE_SI^2 / (HBAR_SI * cell_volume(bm.lattice))
+    Hs = sum(st.H for st in states) .* (fac / nktot)
+    AHs = sum(st.AH for st in states) .* (fac / nktot)
+    Js = sum(st.J for st in states) ./ nktot
+    return KuboResult(ωs, Hs, AHs, Js)
+end
 
-    Threads.@threads for idx in 1:nktot
-        kd = _berry_kdata(bm, kl[idx])
-        E, U = kd.E, kd.U
-        # band velocities and D_h from the rotated velocity matrices
-        dE = [real(kd.dHh[c][n, n]) for c in 1:3, n in 1:nw]
-        Dh = [zeros(ComplexF64, nw, nw) for _ in 1:3]
-        for c in 1:3, m in 1:nw, n in 1:nw
-            (n != m && abs(E[m] - E[n]) > 1e-7) &&
-                (Dh[c][n, m] = kd.dHh[c][n, m] / (E[m] - E[n]))
-        end
-        # A(k) in the Hamiltonian gauge: U†A_W U + i D_h
-        A = [U' * kd.A[c] * U .+ im .* Dh[c] for c in 1:3]
-        occ = Float64.(E .< fermi_energy)
-
-        H = accH[idx]; AH = accAH[idx]; J = accJ[idx]
+# Per-k body of optical_conductivity (top-level: closure-boxing hazard in threaded bodies).
+function _kubo_kpoint!(st, bm::BerryModel, kf::SVector{3,Float64}, fermi_energy::Float64,
+                       ωs::Vector{Float64}, Δk::Float64, eigval_max::Float64, adaptive::Bool,
+                       adpt_fac::Float64, adpt_max::Float64, smr_width::Float64)
+    w = st.work
+    nw = num_wann(bm)
+    nf = length(ωs)
+    kd = _berry_kdata!(w, bm, kf)
+    E, U = kd.E, kd.U
+    # band velocities from the diagonal of the rotated velocity matrices
+    dE = [real(kd.dHh[c][n, n]) for c in 1:3, n in 1:nw]
+    # A(k) in the Hamiltonian gauge: U†A_W U + i D_h, with D_h(n,m) = (U†∂HU)_nm/(ε_m−ε_n)
+    A = st.A
+    for c in 1:3
+        mul!(w.tmp, U', kd.A[c])
+        mul!(A[c], w.tmp, U)
         for m in 1:nw, n in 1:nw
-            n == m && continue
-            (E[m] > eigval_max || E[n] > eigval_max) && continue
-            η = adaptive ?
-                min(adpt_fac * norm(SVector(dE[1, m] - dE[1, n], dE[2, m] - dE[2, n],
-                                            dE[3, m] - dE[3, n])) * Δk, adpt_max) : smr_width
-            η <= 0 && (η = 1e-10)
-            rfac1 = (occ[m] - occ[n]) * (E[m] - E[n])
-            occ_prod = occ[n] * (1.0 - occ[m])
-            for f in 1:nf
-                ωc = complex(ωs[f], adaptive ? η : smr_width)
-                δ = _w0gauss((E[m] - E[n] - ωs[f]) / η) / η
-                J[f] += occ_prod * δ
-                rfac2 = -π * rfac1 * δ
-                cfac = im * rfac1 / (E[m] - E[n] - ωc)
-                for j in 1:3, i in 1:3
-                    aa = A[i][n, m] * A[j][m, n]
-                    H[i, j, f] += rfac2 * aa
-                    AH[i, j, f] += cfac * aa
-                end
+            (n != m && abs(E[m] - E[n]) > 1e-7) &&
+                (A[c][n, m] += im * kd.dHh[c][n, m] / (E[m] - E[n]))
+        end
+    end
+    map!(e -> Float64(e < fermi_energy), w.occ, E)
+    occ = w.occ
+
+    H = st.H; AH = st.AH; J = st.J
+    for m in 1:nw, n in 1:nw
+        n == m && continue
+        (E[m] > eigval_max || E[n] > eigval_max) && continue
+        η = adaptive ?
+            min(adpt_fac * norm(SVector(dE[1, m] - dE[1, n], dE[2, m] - dE[2, n],
+                                        dE[3, m] - dE[3, n])) * Δk, adpt_max) : smr_width
+        η <= 0 && (η = 1e-10)
+        rfac1 = (occ[m] - occ[n]) * (E[m] - E[n])
+        occ_prod = occ[n] * (1.0 - occ[m])
+        for f in 1:nf
+            ωc = complex(ωs[f], adaptive ? η : smr_width)
+            δ = _w0gauss((E[m] - E[n] - ωs[f]) / η) / η
+            J[f] += occ_prod * δ
+            rfac2 = -π * rfac1 * δ
+            cfac = im * rfac1 / (E[m] - E[n] - ωc)
+            for j in 1:3, i in 1:3
+                aa = A[i][n, m] * A[j][m, n]
+                H[i, j, f] += rfac2 * aa
+                AH[i, j, f] += cfac * aa
             end
         end
     end
-    fac = 1.0e8 * ELEM_CHARGE_SI^2 / (HBAR_SI * cell_volume(bm.lattice))
-    Hs = sum(accH) .* (fac / nktot)
-    AHs = sum(accAH) .* (fac / nktot)
-    Js = sum(accJ) ./ nktot
-    return KuboResult(ωs, Hs, AHs, Js)
+    return nothing
 end

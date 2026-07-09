@@ -95,24 +95,26 @@ Occupations are the T = 0 step with strict ε < E_F.
 """
 function spin_moment(sm::SpinModel; fermi_energy::Float64, kmesh::NTuple{3,Int}=(25, 25, 25))
     nktot = prod(kmesh)
+    nw = num_wann(sm.bm)
     kl = [SVector(i / kmesh[1], j / kmesh[2], k / kmesh[3])
           for i in 0:kmesh[1]-1 for j in 0:kmesh[2]-1 for k in 0:kmesh[3]-1]
-    per_k = Vector{SVector{3,Float64}}(undef, nktot)
-    Threads.@threads for idx in 1:nktot
-        per_k[idx] = _spin_moment_k(sm, kl[idx], fermi_energy)
-    end
-    m = -sum(per_k) / nktot
+    states = threaded_ksum(
+        (st, idx) -> (st.acc .+= _spin_moment_k(sm, kl[idx], fermi_energy, st.work)),
+        () -> (work=BerryKWork(nw), acc=MVector{3,Float64}(0, 0, 0)),
+        nktot)
+    m = -SVector(sum(st.acc for st in states)) / nktot
     theta = acosd(m[3] / norm(m))
     phi = atand(m[2] / m[1])
     return (; moment=m, theta, phi)
 end
 
-function _spin_moment_k(sm::SpinModel, kf::SVector{3,Float64}, ef::Float64)
-    E, _, U = eig_deleig_vec(sm.bm, kf; deriv=false)
+function _spin_moment_k(sm::SpinModel, kf::SVector{3,Float64}, ef::Float64,
+                        w::BerryKWork=BerryKWork(num_wann(sm.bm)))
+    E, _, U = eig_deleig_vec!(w, sm.bm, kf; deriv=false)
     occ = findall(<(ef), E)
     acc = MVector{3,Float64}(0.0, 0.0, 0.0)
     for s in 1:3
-        Sh = U' * _ft_op(sm.bm, (@view sm.SSr[:, :, :, s]), kf) * U
+        Sh = U' * _ft_op!(w.tmp, sm.bm, (@view sm.SSr[:, :, :, s]), kf) * U
         for n in occ
             acc[s] += real(Sh[n, n])
         end

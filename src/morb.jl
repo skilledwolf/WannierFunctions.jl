@@ -12,8 +12,6 @@
 using LinearAlgebra
 using StaticArrays
 
-const EV_AU = 3.674932540e-2      # eV → Hartree (CODATA2006, constants.F90:178)
-
 """
     read_uhu(path; num_bands, num_kpts, nntot) -> uHu
 
@@ -145,16 +143,10 @@ function MorbModel(seedname::AbstractString; transl_inv_full::Bool=false)
         # q → R on the Wigner–Seitz set
         Br = zeros(ComplexF64, nw, nw, nr, 3)
         Cr = zeros(ComplexF64, nw, nw, nr, 3, 3)
-        Threads.@threads for ir in 1:nr
-            R = SVector{3,Float64}(bm.irvec[ir]...)
-            for q in 1:nk
-                fac = cis(-TWOPI * dot(kgrid.frac[q], R)) / nk
-                @views for a in 1:3
-                    Br[:, :, ir, a] .+= fac .* Bq[:, :, q, a]
-                    for b in 1:3
-                        Cr[:, :, ir, a, b] .+= fac .* Cq[:, :, q, a, b]
-                    end
-                end
+        for a in 1:3
+            Br[:, :, :, a] = fourier_q_to_R((@view Bq[:, :, :, a]), kgrid, bm.irvec)
+            for b in 1:3
+                Cr[:, :, :, a, b] = fourier_q_to_R((@view Cq[:, :, :, a, b]), kgrid, bm.irvec)
             end
         end
         return MorbModel(bm, Br, Cr)
@@ -255,37 +247,43 @@ Orbital magnetisation (μ_B per cell, x/y/z) from the LVTS12 trace formulas on a
 function orbital_magnetisation(mm::MorbModel; fermi_energy::Float64,
                                kmesh::NTuple{3,Int}=(25, 25, 25))
     nktot = prod(kmesh)
+    nw = num_wann(mm.bm)
     kl = [SVector(i / kmesh[1], j / kmesh[2], k / kmesh[3])
           for i in 0:kmesh[1]-1 for j in 0:kmesh[2]-1 for k in 0:kmesh[3]-1]
-    per_k = Vector{SVector{3,Float64}}(undef, nktot)
     # NB: the k-point body lives in its own top-level function (_morb_kdata) rather than inline
-    # in this loop — a large inlined @threads body with many captured locals produced
+    # in this loop — a large inlined threaded body with many captured locals produced
     # nondeterministic results on Julia 1.12 (closure boxing), while the factored form is
     # deterministic and matches the reference. Keep it factored.
-    Threads.@threads for idx in 1:nktot
-        per_k[idx] = _morb_kdata(mm, kl[idx], fermi_energy)
-    end
+    states = threaded_ksum(
+        (st, idx) -> (st.acc .+= _morb_kdata(mm, kl[idx], fermi_energy, st.work)),
+        () -> (work=BerryKWork(nw), acc=MVector{3,Float64}(0, 0, 0)),
+        nktot)
     fac = -EV_AU / BOHR^2
-    return (fac / nktot) .* sum(per_k)
+    return (fac / nktot) .* SVector(sum(st.acc for st in states))
 end
 
 "Per-k morb integrand: img + imh − 2E_F·imf (J0+J1+J2 summed), Wannier-gauge traces."
-function _morb_kdata(mm::MorbModel, kf::SVector{3,Float64}, ef::Float64)
-    imf, img, imh = _imfgh_kdata(mm, kf, ef)
+function _morb_kdata(mm::MorbModel, kf::SVector{3,Float64}, ef::Float64,
+                     w::BerryKWork=BerryKWork(num_wann(mm.bm)))
+    imf, img, imh = _imfgh_kdata(mm, kf, ef, w)
     return SVector((img .+ imh .- 2.0 * ef .* imf)...)
 end
 
 "Per-k LVTS12 trace triple (imf, img, imh), each the J0+J1+J2 sum per axial component."
-function _imfgh_kdata(mm::MorbModel, kf::SVector{3,Float64}, ef::Float64)
-    kd, H, B, C = _imfgh_setup(mm, kf)
-    return _imfgh_occ(kd, H, B, C, Float64.(kd.E .< ef))
+function _imfgh_kdata(mm::MorbModel, kf::SVector{3,Float64}, ef::Float64,
+                      w::BerryKWork=BerryKWork(num_wann(mm.bm)))
+    kd, H, B, C = _imfgh_setup(mm, kf, w)
+    map!(e -> Float64(e < ef), w.occ, kd.E)
+    return _imfgh_occ(kd, H, B, C, w.occ, w)
 end
 
 "Interpolate everything the imfgh traces need at one k (shared across occupation choices)."
-function _imfgh_setup(mm::MorbModel, kf::SVector{3,Float64})
+function _imfgh_setup(mm::MorbModel, kf::SVector{3,Float64},
+                      w::BerryKWork=BerryKWork(num_wann(mm.bm)))
     bm = mm.bm
-    kd = _berry_kdata(bm, kf)
-    H = kd.U * Diagonal(kd.E) * kd.U'
+    kd = _berry_kdata!(w, bm, kf)
+    w.tmp .= kd.U .* kd.E'                  # U · diag(E)
+    H = mul!(w.Hh, w.tmp, kd.U')            # H in the Hamiltonian gauge
     # _ft_op is Wigner–Seitz-distance aware (use_ws_distance), unlike a plain R-sum.
     # All 9 C components are interpolated directly: with transl_inv_full C(R) is not
     # Hermitian-paired, and in the plain case the stored components already are.
@@ -294,22 +292,14 @@ function _imfgh_setup(mm::MorbModel, kf::SVector{3,Float64})
     return kd, H, B, C
 end
 
-function _imfgh_occ(kd, H, B, C, occ::Vector{Float64})
+function _imfgh_occ(kd, H, B, C, occ::Vector{Float64},
+                    w::BerryKWork=BerryKWork(length(kd.E)))
     E, U = kd.E, kd.U
     nw = length(E)
-    f = U * Diagonal(occ) * U'
-    JJp = [zeros(ComplexF64, nw, nw) for _ in 1:3]
-    JJm = [zeros(ComplexF64, nw, nw) for _ in 1:3]
-    for c in 1:3
-        for m in 1:nw, n in 1:nw
-            if occ[n] < 0.5 && occ[m] > 0.5
-                JJp[c][n, m] = im * kd.dHh[c][n, m] / (E[m] - E[n])
-                JJm[c][m, n] = im * kd.dHh[c][m, n] / (E[n] - E[m])
-            end
-        end
-        JJp[c] = U * JJp[c] * U'
-        JJm[c] = U * JJm[c] * U'
-    end
+    w.tmp .= U .* occ'                      # U · diag(occ)
+    f = mul!(w.f, w.tmp, U')
+    _jj_matrices!(w.JJp, w.JJm, w.tmp, kd, occ)
+    JJp, JJm = w.JJp, w.JJm
 
     imf = MVector{3,Float64}(0, 0, 0)
     img = MVector{3,Float64}(0, 0, 0)

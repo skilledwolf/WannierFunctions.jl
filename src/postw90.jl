@@ -215,13 +215,14 @@ function postw90_main(seedname::AbstractString; verbose::Bool=true)
     kmesh_glob = _pw_kmesh(raw, "kmesh", win.mp_grid)
     kmesh_def = _pw_kmesh(raw, "berry_kmesh", kmesh_glob)
 
-    # lazy, shared model instances
-    _bm = Ref{Any}(nothing)
-    bm() = (_bm[] === nothing && (_bm[] = BerryModel(seedname)); _bm[])
-    _mm = Ref{Any}(nothing)
+    # lazy, shared model instances (typed small-Union Refs: `Any` here would make every
+    # downstream `bm()`/`mm()` call dynamically dispatched)
+    _bm = Ref{Union{Nothing,BerryModel}}(nothing)
+    bm() = (_bm[] === nothing && (_bm[] = BerryModel(seedname)); _bm[]::BerryModel)
+    _mm = Ref{Union{Nothing,MorbModel}}(nothing)
     mm() = (_mm[] === nothing &&
             (_mm[] = MorbModel(seedname; transl_inv_full=_getbool(raw, "transl_inv_full", false)));
-            _mm[])
+            _mm[]::MorbModel)
     function shcmodel()
         method = lowercase(get(raw, "shc_method", "qiao"))
         kw = Dict{Symbol,Any}()

@@ -266,10 +266,11 @@ function zmatrix(Mwin_k::Vector{Matrix{ComplexF64}}, Uopt, kpb, wd::WindowData, 
     nfz = wd.indxnfroz[k]
     ndimk = length(nfz)
     Z = zeros(ComplexF64, ndimk, ndimk)
+    cbw = Matrix{ComplexF64}(undef, size(Mwin_k[1], 1), num_wann)   # ndimwin[k] × num_wann
     for nn in 1:bv.nntot
         w = bv.wb[nn, k]
         k2 = kpb[nn, k]
-        cbw = Mwin_k[nn] * Uopt[k2]                      # ndimwin[k] × num_wann
+        mul!(cbw, Mwin_k[nn], Uopt[k2])
         for n in 1:ndimk
             q = nfz[n]
             for m in 1:n
@@ -292,12 +293,17 @@ end
 function omega_invariant(Mwin, Uopt, kpb, bv::BVectors, num_wann::Int)
     nk = length(Uopt)
     wbtot = sum(@view bv.wb[:, 1])
+    ndmax = maximum(size(u, 1) for u in Uopt)
+    t1 = Matrix{ComplexF64}(undef, num_wann, ndmax)
+    cww = Matrix{ComplexF64}(undef, num_wann, num_wann)
     tot = 0.0
     for k in 1:nk
         s = num_wann * wbtot
         for nn in 1:bv.nntot
             k2 = kpb[nn, k]
-            cww = Uopt[k]' * Mwin[k][nn] * Uopt[k2]      # num_wann × num_wann
+            t1v = @view t1[:, 1:size(Uopt[k2], 1)]
+            mul!(t1v, Uopt[k]', Mwin[k][nn])
+            mul!(cww, t1v, Uopt[k2])                     # num_wann × num_wann
             s -= bv.wb[nn, k] * sum(abs2, cww)
         end
         tot += s
@@ -379,6 +385,9 @@ function disentangle(model::Model;
     trace = Tuple{Int,Float64,Float64,Float64}[]
     history = fill(Inf, dis_conv_window)
     Zin = Vector{Matrix{ComplexF64}}(undef, nk)
+    # gemm scratch for the per-iteration frozen-overlap Ω_I sums
+    froz_t1 = Matrix{ComplexF64}(undef, nw, maximum(wd.ndimwin))
+    froz_cww = Matrix{ComplexF64}(undef, nw, nw)
     niter = 0
     for iter in 1:dis_num_iter
         niter = iter
@@ -400,8 +409,9 @@ function disentangle(model::Model;
                 # In symmetry-adapted mode only the irreducible representatives are mixed
                 # (only they feed the constrained update); the rest are never read.
                 sitesym === nothing || sitesym.ir2ik[sitesym.ik2ir[k]] == k || continue
-                Zin[k] = dis_mix_ratio .* Zout[k] .+ (1 - dis_mix_ratio) .* Zin[k]
-                Zin[k] = (Zin[k] + Zin[k]') ./ 2
+                Zin[k] .= dis_mix_ratio .* Zout[k] .+ (1 - dis_mix_ratio) .* Zin[k]
+                Zout[k] .= Zin[k]'          # Zout[k] is rebuilt next iteration — free scratch
+                Zin[k] .= (Zin[k] .+ Zout[k]) ./ 2
             end
         end
 
@@ -430,9 +440,11 @@ function disentangle(model::Model;
                 nf == 0 && continue
                 for nn in 1:bv.nntot
                     k2 = kpb[nn, k]
-                    cww = Uopt[k]' * Mwin[k][nn] * Uopt[k2]
+                    t1v = @view froz_t1[:, 1:wd.ndimwin[k2]]
+                    mul!(t1v, Uopt[k]', Mwin[k][nn])
+                    mul!(froz_cww, t1v, Uopt[k2])
                     for m in 1:nf, n in 1:nw
-                        wk[k] -= bv.wb[nn, k] * abs2(cww[m, n])
+                        wk[k] -= bv.wb[nn, k] * abs2(froz_cww[m, n])
                     end
                 end
             end

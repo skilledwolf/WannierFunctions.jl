@@ -13,12 +13,21 @@ function expm_antiherm(X::AbstractMatrix{ComplexF64})
 end
 
 "Per-k anti-Hermitian generators → per-k unitary rotations."
-function expm_all(gen::Array{ComplexF64,3})
+expm_all(gen::Array{ComplexF64,3}) =
+    expm_all!(Array{ComplexF64,3}(undef, size(gen)...), gen)
+
+"In-place [`expm_all`](@ref): rotations into a preallocated `R` (chunked, gemm-buffered)."
+function expm_all!(R::Array{ComplexF64,3}, gen::Array{ComplexF64,3})
     nw, _, nk = size(gen)
-    R = Array{ComplexF64,3}(undef, nw, nw, nk)
-    @maybe_threads (nk >= THREAD_MIN) for k in 1:nk
-        R[:, :, k] = expm_antiherm(@view gen[:, :, k])
-    end
+    threaded_ksum(
+        (st, k) -> begin
+            st.t1 .= im .* @view gen[:, :, k]        # i·X is Hermitian
+            F = eigen!(Hermitian(st.t1))
+            st.t2 .= F.vectors .* transpose(cis.(-F.values))
+            mul!((@view R[:, :, k]), st.t2, F.vectors')
+        end,
+        () -> (t1=zeros(ComplexF64, nw, nw), t2=zeros(ComplexF64, nw, nw)),
+        nk)
     return R
 end
 
@@ -27,17 +36,22 @@ function apply_rotation!(U::Array{ComplexF64,3}, Mrot::Array{ComplexF64,4},
                         kpb::Matrix{Int}, R::Array{ComplexF64,3})
     nw, _, nk = size(U)
     nntot = size(Mrot, 3)
-    @maybe_threads (nk >= THREAD_MIN) for k in 1:nk
-        U[:, :, k] = (@view U[:, :, k]) * (@view R[:, :, k])
-    end
     # NB: Mrot[:, :, b, k] reads R at both k and its neighbour, but writes only slice (b, k),
-    # and R is not mutated here — safe to thread over k.
-    @maybe_threads (nk >= THREAD_MIN) for k in 1:nk
-        for b in 1:nntot
-            kb = kpb[b, k]
-            Mrot[:, :, b, k] = (@view R[:, :, k])' * (@view Mrot[:, :, b, k]) * (@view R[:, :, kb])
-        end
-    end
+    # and R is not mutated here — safe to run k-points concurrently.
+    threaded_ksum(
+        (st, k) -> begin
+            Uk = @view U[:, :, k]
+            mul!(st.t1, Uk, (@view R[:, :, k]))
+            copyto!(Uk, st.t1)
+            for b in 1:nntot
+                kb = kpb[b, k]
+                Mk = @view Mrot[:, :, b, k]
+                mul!(st.t1, (@view R[:, :, k])', Mk)
+                mul!(Mk, st.t1, (@view R[:, :, kb]))
+            end
+        end,
+        () -> (t1=zeros(ComplexF64, nw, nw),),
+        nk)
     return nothing
 end
 
@@ -221,7 +235,14 @@ function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
     omega_trace = Float64[sr.Ω]
     verbose && @info "iter 0" Ω=sr.Ω ΩI=sr.ΩI ΩOD=sr.ΩOD ΩD=sr.ΩD
 
+    # iteration-reused buffers: CG state, scaled generator, rotations, and the trial gauge
+    # (the line search would otherwise copy the full U/Mrot arrays afresh every trial)
     cdqkeep = zeros(ComplexF64, nw, nw, nk)
+    cdq = zeros(ComplexF64, nw, nw, nk)
+    gen = zeros(ComplexF64, nw, nw, nk)
+    Rbuf = zeros(ComplexF64, nw, nw, nk)
+    Ut = similar(U)
+    Mt = similar(Mrot)
     ncg = 0
     gcnorm0 = 0.0
     converged = false
@@ -254,36 +275,40 @@ function _localize_w90(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
 
         # Steepest-descent component uses the (possibly filtered) gradient; the CG-memory term
         # β·d_prev is untouched. The line-search slope doda0 always uses the TRUE gradient G.
-        cdq = Gpre .+ gcfac .* cdqkeep
+        cdq .= Gpre .+ gcfac .* cdqkeep
         doda0 = -real(dot(G, cdq)) / (4.0 * wbtot)     # dot(a,b)=Σ conj(a)·b
         if doda0 > 0.0
             if ncg > 0
-                cdq = copy(G); ncg = 0; gcfac = 0.0
+                cdq .= G; ncg = 0; gcfac = 0.0
                 doda0 = -real(dot(G, cdq)) / (4.0 * wbtot)
                 if doda0 > 0.0
-                    cdq = -cdq; doda0 = -doda0
+                    cdq .*= -1; doda0 = -doda0
                 end
             else
-                cdq = -cdq; doda0 = -doda0
+                cdq .*= -1; doda0 = -doda0
             end
         end
-        cdqkeep = copy(cdq)
+        copyto!(cdqkeep, cdq)
 
         # Trial step, then parabolic optimal step.
-        Rtrial = expm_all(cdq .* (trial_step / (4.0 * wbtot)))
-        Ut = copy(U); Mt = copy(Mrot)
-        apply_rotation!(Ut, Mt, kpb, Rtrial)
+        gen .= cdq .* (trial_step / (4.0 * wbtot))
+        expm_all!(Rbuf, gen)
+        copyto!(Ut, U); copyto!(Mt, Mrot)
+        apply_rotation!(Ut, Mt, kpb, Rbuf)
         srt = _spread(Mt)
 
         alphamin, _, lquad = optimal_step(sr.Ω, srt.Ω, doda0, trial_step)
 
         old_om = sr.Ω
         if lquad
-            Ropt = expm_all(cdq .* (alphamin / (4.0 * wbtot)))
-            apply_rotation!(U, Mrot, kpb, Ropt)
+            gen .= cdq .* (alphamin / (4.0 * wbtot))
+            expm_all!(Rbuf, gen)
+            apply_rotation!(U, Mrot, kpb, Rbuf)
             sr = _spread(Mrot)
         else
-            U, Mrot, sr = Ut, Mt, srt
+            U, Ut = Ut, U            # swap buffer bindings: the trial state becomes current
+            Mrot, Mt = Mt, Mrot
+            sr = srt
         end
         push!(omega_trace, sr.Ω)
         verbose && @info "iter $iter" Ω=sr.Ω α=alphamin
@@ -337,6 +362,11 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
 
     G_prev = zeros(ComplexF64, size(U))
     d = zeros(ComplexF64, size(U))
+    # line-search buffers, reused across iterations and backtracking trials
+    gen = zeros(ComplexF64, size(U))
+    Rbuf = zeros(ComplexF64, size(U))
+    Ut = similar(U); Mt = similar(Mrot)
+    Uo = similar(U); Mo = similar(Mrot)
     step = trial_step
     history = fill(Inf, max(conv_window, 1))
     converged = false
@@ -355,12 +385,12 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
 
         # Polak–Ribière+ with automatic reset.
         if iter == 1
-            d = copy(G)
+            d .= G
         else
             β = max(0.0, inner(G, G .- G_prev) / inner(G_prev, G_prev))
-            d = G .+ β .* d
+            d .= G .+ β .* d
             # reset to steepest descent if not a descent direction
-            inner(G, d) <= 0 && (d = copy(G))
+            inner(G, d) <= 0 && (d .= G)
         end
         G_prev = G
         # site_symmetry: propagate the (representative-k) rotation to the star so U stays
@@ -371,12 +401,13 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
 
         # Parabolic-model step (one trial evaluation), Armijo backtracking as safeguard.
         s = step
-        local Ut, Mt, srt
+        local srt
         accepted = false
         for bt in 1:12
-            R = expm_all(d .* (s / fourw))
-            Ut = copy(U); Mt = copy(Mrot)
-            apply_rotation!(Ut, Mt, kpb, R)
+            gen .= d .* (s / fourw)
+            expm_all!(Rbuf, gen)
+            copyto!(Ut, U); copyto!(Mt, Mrot)
+            apply_rotation!(Ut, Mt, kpb, Rbuf)
             srt = ss === nothing ? compute_spread(Mt, bv; slwf=slwf) : ss_spread(Mt, bv, ss)
             if srt.Ω <= sr.Ω + 1.0e-4 * s * slope    # Armijo sufficient decrease
                 # one parabolic refinement through (0, sr.Ω), slope, (s, srt.Ω)
@@ -384,12 +415,15 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
                 if denom > 0
                     s_opt = clamp(-slope * s^2 / (2 * denom), 0.1 * s, 3.0 * s)
                     if abs(s_opt - s) > 1e-3 * s
-                        Ro = expm_all(d .* (s_opt / fourw))
-                        Uo = copy(U); Mo = copy(Mrot)
-                        apply_rotation!(Uo, Mo, kpb, Ro)
+                        gen .= d .* (s_opt / fourw)
+                        expm_all!(Rbuf, gen)
+                        copyto!(Uo, U); copyto!(Mo, Mrot)
+                        apply_rotation!(Uo, Mo, kpb, Rbuf)
                         sro = ss === nothing ? compute_spread(Mo, bv; slwf=slwf) : ss_spread(Mo, bv, ss)
                         if sro.Ω < srt.Ω
-                            Ut, Mt, srt, s = Uo, Mo, sro, s_opt
+                            Ut, Uo = Uo, Ut       # refined trial becomes the trial state
+                            Mt, Mo = Mo, Mt
+                            srt, s = sro, s_opt
                         end
                     end
                 end
@@ -406,7 +440,9 @@ function _localize_rcg(U0::Array{ComplexF64,3}, Mrot0::Array{ComplexF64,4}, bv::
         end
 
         old_om = sr.Ω
-        U, Mrot, sr = Ut, Mt, srt
+        U, Ut = Ut, U                         # swap buffer bindings: trial becomes current
+        Mrot, Mt = Mt, Mrot
+        sr = srt
         step = min(2.0 * s, 20.0)             # carry an adaptive initial step
         push!(omega_trace, sr.Ω)
         verbose && @info "rcg iter $iter" Ω=sr.Ω step=s

@@ -27,18 +27,20 @@ function injection_current(bm::BerryModel; freqs::Vector{Float64}, fermi_energy:
     nktot = prod(kmesh)
     kl = [SVector(i / kmesh[1], j / kmesh[2], k / kmesh[3])
           for i in 0:kmesh[1]-1 for j in 0:kmesh[2]-1 for k in 0:kmesh[3]-1]
-    per_k = Vector{Array{Float64,4}}(undef, nktot)
-    Threads.@threads for idx in 1:nktot
-        per_k[idx] = _inj_kpoint(bm, kl[idx], freqs, fermi_energy, smr_width)
-    end
-    η = reduce(+, per_k)
+    states = threaded_ksum(
+        (st, idx) -> _inj_kpoint!(st.acc, st.work, bm, kl[idx], freqs, fermi_energy,
+                                  smr_width),
+        () -> (work=BerryKWork(num_wann(bm)), acc=zeros(3, 3, 3, nfreq)),
+        nktot)
+    η = sum(st.acc for st in states)
     η .*= INJ_FACTOR / (nktot * cell_volume(bm.lattice))
     return η
 end
 
-function _inj_kpoint(bm::BerryModel, kf::SVector{3,Float64}, freqs::Vector{Float64},
-                     ef::Float64, w::Float64)
-    kd = _berry_kdata(bm, kf)
+function _inj_kpoint!(out::Array{Float64,4}, kw::BerryKWork, bm::BerryModel,
+                      kf::SVector{3,Float64}, freqs::Vector{Float64},
+                      ef::Float64, w::Float64)
+    kd = _berry_kdata!(kw, bm, kf)
     E, U = kd.E, kd.U
     nw = length(E)
     nfreq = length(freqs)
@@ -51,7 +53,6 @@ function _inj_kpoint(bm::BerryModel, kf::SVector{3,Float64}, freqs::Vector{Float
     v = [real(kd.dHh[a][m, m]) for a in 1:3, m in 1:nw]
     occ = [E[m] < ef ? 1.0 : 0.0 for m in 1:nw]
     gnorm = 1.0 / (w * sqrt(pi))
-    out = zeros(3, 3, 3, nfreq)
     for m in 1:nw, n in 1:nw
         n == m && continue
         occf = occ[n] - occ[m]

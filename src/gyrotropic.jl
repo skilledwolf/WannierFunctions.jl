@@ -9,9 +9,6 @@ using LinearAlgebra
 using StaticArrays
 using Printf
 
-const ELEC_MASS_SI = 9.10938215e-31        # CODATA2006
-const EPS0_SI = 8.854187817e-12
-
 """
     gyrotropic(m; tasks, fermi_energies, freqs=[0.0], kmesh, smr_width,
                box=I, box_corner=zeros(3), smr_max_arg=5.0, degen_thresh=0.0,
@@ -56,14 +53,15 @@ function gyrotropic(m::Union{BerryModel,MorbModel};
         kl[idx += 1] = corner + bx' * f          # k_j = corner_j + Σ_i f_i box[i,j]
     end
 
-    acc = [_gyro_acc(nf, nω) for _ in 1:nktot]
-    Threads.@threads for ik in 1:nktot
-        _gyro_kpoint!(acc[ik], m, bm, kl[ik], kweight, tasks, fermi_energies, ωc,
-                      smr_width, smr_max_arg, degen_thresh, bl, eigval_max, spin)
-    end
-    tot = acc[1]
-    for ik in 2:nktot, fld in 1:length(tot)
-        tot[fld] .+= acc[ik][fld]
+    states = threaded_ksum(
+        (st, ik) -> _gyro_kpoint!(st.acc, m, bm, kl[ik], kweight, tasks, fermi_energies, ωc,
+                                  smr_width, smr_max_arg, degen_thresh, bl, eigval_max, spin,
+                                  st.work, st.occ),
+        () -> (acc=_gyro_acc(nf, nω), work=BerryKWork(nw), occ=zeros(nw)),
+        nktot)
+    tot = states[1].acc
+    for ic in 2:length(states), fld in 1:length(tot)
+        tot[fld] .+= states[ic].acc[fld]
     end
     D, Dw, C, Korb, Kspn, dos, NOAorb, NOAspn = tot
 
@@ -93,9 +91,14 @@ end
 function _gyro_kpoint!(out, m, bm::BerryModel, kf::SVector{3,Float64}, kweight::Float64,
                        tasks, efs::Vector{Float64}, ωc::Vector{ComplexF64}, η::Float64,
                        max_arg::Float64, degen_thresh::Float64, bl::Vector{Int},
-                       eigval_max::Float64, spin)
+                       eigval_max::Float64, spin,
+                       w::BerryKWork=BerryKWork(num_wann(bm)),
+                       occ::Vector{Float64}=zeros(num_wann(bm)))
     D, Dw, C, Korb, Kspn, dos, NOAorb, NOAspn = out
-    kd = _berry_kdata(bm, kf)
+    # With :K the kdata is (re)built inside _imfgh_setup on the same workspace — the
+    # aliased kd fields are identical either way.
+    setup = :K in tasks ? _imfgh_setup(m, kf, w) : nothing
+    kd = setup === nothing ? _berry_kdata!(w, bm, kf) : setup[1]
     E, U = kd.E, kd.U
     nw = length(E)
     dE = [real(kd.dHh[c][n, n]) for c in 1:3, n in 1:nw]
@@ -109,21 +112,20 @@ function _gyro_kpoint!(out, m, bm::BerryModel, kf::SVector{3,Float64}, kweight::
         end
         AA = [U' * kd.A[c] * U .+ im .* Dh[c] for c in 1:3]
     end
-    setup = :K in tasks ? _imfgh_setup(m, kf) : nothing
     S3 = spin === nothing ? nothing : _spin_S3(spin, kf, U)
 
     for n in bl
         (n > 1 && E[n] - E[n-1] <= degen_thresh) && continue
         (n < nw && E[n+1] - E[n] <= degen_thresh) && continue
-        occ = zeros(nw)
+        fill!(occ, 0.0)
         occ[n] = 1.0
         curv = orb = nothing
         if :K in tasks
-            f, g, h = _imfgh_occ(setup..., occ)
+            f, g, h = _imfgh_occ(setup..., occ, w)
             curv = f
             orb = h .- g
         elseif :D0 in tasks || :C in tasks || :dos in tasks
-            :D0 in tasks && (curv = _imf_occ(kd, occ))
+            :D0 in tasks && (curv = _imf_occ!(w, kd, occ))
         end
         curvw = :Dw in tasks ? _gyro_curv_w(E, AA, n, bl, ωc) : nothing     # (nω, 3)
 

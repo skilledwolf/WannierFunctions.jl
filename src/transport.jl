@@ -18,7 +18,8 @@ López-Sancho/Rubio decimation for the lead transfer matrices at complex energy 
 """
 function tran_transfer(H00::Matrix{Float64}, H01::Matrix{Float64}, ecmp::ComplexF64)
     n = size(H00, 1)
-    t11 = (ecmp * I - H00) \ Matrix{ComplexF64}(I, n, n)   # (e − H00)⁻¹
+    Id = Matrix{ComplexF64}(I, n, n)
+    t11 = (ecmp * I - H00) \ Id                            # (e − H00)⁻¹
     tau = t11 * H01'
     taut = t11 * H01
     tot = copy(tau)
@@ -27,7 +28,7 @@ function tran_transfer(H00::Matrix{Float64}, H01::Matrix{Float64}, ecmp::Complex
     tsumt = copy(tau)
     for _ in 1:TRAN_NTERX
         s1 = I - tau * taut - taut * tau
-        s2 = s1 \ Matrix{ComplexF64}(I, n, n)
+        s2 = s1 \ Id
         tau2 = s2 * (tau * tau)
         taut2 = s2 * (taut * taut)
         tot += tsum * tau2

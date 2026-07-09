@@ -25,6 +25,8 @@ function wigner_seitz(lattice::Lattice, mp_grid::NTuple{3,Int};
     irvec = NTuple{3,Int}[]
     ndegen = Int[]
     rng = -(ws_search_size + 1):(ws_search_size + 1)
+    dists = Float64[]
+    sizehint!(dists, length(rng)^3)
     for n1 in -ws_search_size*mp_grid[1]:ws_search_size*mp_grid[1],
         n2 in -ws_search_size*mp_grid[2]:ws_search_size*mp_grid[2],
         n3 in -ws_search_size*mp_grid[3]:ws_search_size*mp_grid[3]
@@ -32,7 +34,7 @@ function wigner_seitz(lattice::Lattice, mp_grid::NTuple{3,Int};
         dmin = Inf
         d0 = 0.0
         deg = 0
-        dists = Float64[]
+        empty!(dists)
         for i1 in rng, i2 in rng, i3 in rng
             d = dist((n1 - i1*mp_grid[1], n2 - i2*mp_grid[2], n3 - i3*mp_grid[3]))
             push!(dists, d)
@@ -67,14 +69,7 @@ function build_hr(U::Array{ComplexF64,3}, eig::Matrix{Float64}, kgrid::KGrid,
         Uk = @view U[:, :, k]
         Hk[:, :, k] = Uk' * Diagonal(@view eig[:, k]) * Uk
     end
-    Hr = zeros(ComplexF64, nw, nw, nr)
-    @maybe_threads (nr >= THREAD_MIN) for ir in 1:nr
-        R = SVector{3,Float64}(irvec[ir]...)
-        for k in 1:nk
-            fac = cis(-TWOPI * dot(kgrid.frac[k], R)) / nk
-            @views Hr[:, :, ir] .+= fac .* Hk[:, :, k]
-        end
-    end
+    Hr = fourier_q_to_R(Hk, kgrid, irvec)
     return Hr, Hk
 end
 

@@ -171,8 +171,11 @@ _getint(raw, key, default) = haskey(raw, key) ? parse(Int, split(raw[key])[1]) :
 _getfloat(raw, key, default) = haskey(raw, key) ? parse_f64(split(raw[key])[1]) : default
 function _getbool(raw, key, default)
     haskey(raw, key) || return default
-    v = lowercase(raw[key])
-    return occursin("t", v) && !occursin("f", v)
+    v = lowercase(first(split(raw[key])))
+    v in ("t", ".true.", "true", ".t.", "1") && return true
+    v in ("f", ".false.", "false", ".f.", "0") && return false
+    error("logical keyword `$key` has unparseable value `$(raw[key])` " *
+          "(expected true/false/.true./.false./t/f/1/0)")
 end
 
 "Parse a `unit_cell_cart` block into a 3×3 matrix whose columns are the lattice vectors (Å)."
@@ -253,6 +256,25 @@ function read_win(path::AbstractString; strict::Bool=true)
     )
 end
 
+# Low-allocation record tokenizers: `eachsplit` avoids materialising a token array per
+# line — the .amn/.mmn record loops run num_bands²·nntot·num_kpts times on large systems.
+@inline function _split2(ln::AbstractString)
+    it = eachsplit(ln)
+    a = iterate(it);       a === nothing && error("malformed 2-token record: `$ln`")
+    b = iterate(it, a[2]); b === nothing && error("malformed 2-token record: `$ln`")
+    return a[1], b[1]
+end
+
+@inline function _split5(ln::AbstractString)
+    it = eachsplit(ln)
+    a = iterate(it);       a === nothing && error("malformed 5-token record: `$ln`")
+    b = iterate(it, a[2]); b === nothing && error("malformed 5-token record: `$ln`")
+    c = iterate(it, b[2]); c === nothing && error("malformed 5-token record: `$ln`")
+    d = iterate(it, c[2]); d === nothing && error("malformed 5-token record: `$ln`")
+    e = iterate(it, d[2]); e === nothing && error("malformed 5-token record: `$ln`")
+    return a[1], b[1], c[1], d[1], e[1]
+end
+
 # ---------------------------------------------------------------------------
 # .amn — projection overlaps A[m,n,k] = ⟨ψ_{m,k}|g_n⟩
 # ---------------------------------------------------------------------------
@@ -269,9 +291,9 @@ function read_amn(path::AbstractString)
         nb, nk, nw = parse.(Int, split(readline(io)))
         A = Array{ComplexF64,3}(undef, nb, nw, nk)
         for _ in 1:(nb * nw * nk)
-            t = split(readline(io))
-            m, n, k = parse(Int, t[1]), parse(Int, t[2]), parse(Int, t[3])
-            A[m, n, k] = complex(parse_f64(t[4]), parse_f64(t[5]))
+            t1, t2, t3, t4, t5 = _split5(readline(io))
+            m, n, k = parse(Int, t1), parse(Int, t2), parse(Int, t3)
+            A[m, n, k] = complex(parse_f64(t4), parse_f64(t5))
         end
         return A, nb, nk, nw
     end
@@ -298,16 +320,16 @@ function read_mmn(path::AbstractString)
         gpb = Array{Int,3}(undef, 3, nntot, nk)
         slot = zeros(Int, nk)                          # per-k running neighbour counter
         for _ in 1:(nk * nntot)
-            h = split(readline(io))
-            k = parse(Int, h[1])
+            h1, h2, h3, h4, h5 = _split5(readline(io))
+            k = parse(Int, h1)
             b = (slot[k] += 1)
-            kpb[b, k] = parse(Int, h[2])
-            gpb[1, b, k] = parse(Int, h[3])
-            gpb[2, b, k] = parse(Int, h[4])
-            gpb[3, b, k] = parse(Int, h[5])
+            kpb[b, k] = parse(Int, h2)
+            gpb[1, b, k] = parse(Int, h3)
+            gpb[2, b, k] = parse(Int, h4)
+            gpb[3, b, k] = parse(Int, h5)
             for n in 1:nb, m in 1:nb                   # m fastest
-                t = split(readline(io))
-                M[m, n, b, k] = complex(parse_f64(t[1]), parse_f64(t[2]))
+                t1, t2 = _split2(readline(io))
+                M[m, n, b, k] = complex(parse_f64(t1), parse_f64(t2))
             end
         end
         return M, kpb, gpb, nb, nk, nntot

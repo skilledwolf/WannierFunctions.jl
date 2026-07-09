@@ -80,8 +80,9 @@ function _pseudovector_subgroup(bm::BerryModel, sym::SymmetryOps, kmesh::NTuple{
     Ω = Dict{NTuple{3,Int},SVector{3,Float64}}()
     key(k) = (round(Int, mod(k[1], 1) * n1) % n1, round(Int, mod(k[2], 1) * n2) % n2,
               round(Int, mod(k[3], 1) * n3) % n3)
+    w = BerryKWork(num_wann(bm))
     for k in ks
-        Ω[key(k)] = _imf_kdata(_berry_kdata(bm, k), fermi_energy)
+        Ω[key(k)] = _imf_kdata!(w, _berry_kdata!(w, bm, k), fermi_energy)
     end
     keep = Int[]
     B = bm.lattice.B
@@ -115,17 +116,20 @@ function anomalous_hall_sym(bm::BerryModel, sym::SymmetryOps; fermi_energy::Floa
     reps, wts, _ = irreducible_kmesh(kmesh, sym; kaction=:cart, lattice=bm.lattice)
     ng = nsym(sym)
     nktot = prod(kmesh)
-    acc = zeros(SVector{3,Float64})
+    nw = num_wann(bm)
     per = Vector{SVector{3,Float64}}(undef, length(reps))
-    Threads.@threads for i in 1:length(reps)
-        Ω = _imf_kdata(_berry_kdata(bm, reps[i]), fermi_energy)
-        s = zeros(SVector{3,Float64})
-        for r in 1:ng
-            R = sym.rot[r]
-            s += det(R) .* (R * Ω)
-        end
-        per[i] = (wts[i] / ng) .* s
-    end
+    threaded_ksum(
+        (st, i) -> begin
+            Ω = _imf_kdata!(st.work, _berry_kdata!(st.work, bm, reps[i]), fermi_energy)
+            s = zeros(SVector{3,Float64})
+            for r in 1:ng
+                R = sym.rot[r]
+                s += det(R) .* (R * Ω)
+            end
+            per[i] = (wts[i] / ng) .* s
+        end,
+        () -> (work=BerryKWork(nw),),
+        length(reps))
     acc = reduce(+, per)
     fac = -1.0e8 * ELEM_CHARGE_SI^2 / (HBAR_SI * cell_volume(bm.lattice))
     return (fac / nktot) .* acc, (length(reps), nktot)
@@ -145,15 +149,18 @@ function orbital_magnetisation_sym(mm::MorbModel, sym::SymmetryOps; fermi_energy
     ng = nsym(sym)
     nktot = prod(kmesh)
     per = Vector{SVector{3,Float64}}(undef, length(reps))
-    Threads.@threads for i in 1:length(reps)
-        m = _morb_kdata(mm, reps[i], fermi_energy)
-        s = zeros(SVector{3,Float64})
-        for r in 1:ng
-            R = sym.rot[r]
-            s += det(R) .* (R * m)
-        end
-        per[i] = (wts[i] / ng) .* s
-    end
+    threaded_ksum(
+        (st, i) -> begin
+            m = _morb_kdata(mm, reps[i], fermi_energy, st.work)
+            s = zeros(SVector{3,Float64})
+            for r in 1:ng
+                R = sym.rot[r]
+                s += det(R) .* (R * m)
+            end
+            per[i] = (wts[i] / ng) .* s
+        end,
+        () -> (work=BerryKWork(num_wann(mm.bm)),),
+        length(reps))
     fac = -EV_AU / BOHR^2
     return (fac / nktot) .* reduce(+, per), (length(reps), nktot)
 end
@@ -175,12 +182,15 @@ function density_of_states_sym(bm::BerryModel, sym::SymmetryOps;
     nktot = prod(kmesh)
     Δk = kmesh_spacing(bm.lattice, kmesh)
     per = Vector{Vector{Float64}}(undef, length(reps))
-    Threads.@threads for i in 1:length(reps)
-        out = zeros(length(es), 1)
-        _dos_kpoint!(out, bm, reps[i], es, Δk, adaptive, adpt_fac, adpt_max, smr_width,
-                     nothing, nothing, 0.0, 0.0, elec_per_state)
-        per[i] = wts[i] .* out[:, 1]
-    end
+    threaded_ksum(
+        (st, i) -> begin
+            fill!(st.out, 0.0)
+            _dos_kpoint!(st.out, st.work, bm, reps[i], es, Δk, adaptive, adpt_fac, adpt_max,
+                         smr_width, nothing, nothing, 0.0, 0.0, elec_per_state)
+            per[i] = wts[i] .* st.out[:, 1]
+        end,
+        () -> (work=BerryKWork(num_wann(bm)), out=zeros(length(es), 1)),
+        length(reps))
     return es, reduce(+, per) ./ nktot, (length(reps), nktot)
 end
 

@@ -184,14 +184,18 @@ function write_bxsf(seedname::AbstractString, lattice::Lattice, Hr::Array{Comple
     eigs = Array{Float64,2}(undef, nw, (np + 1)^3)
     kpts = [SVector((lx - 1) / np, (ly - 1) / np, (lz - 1) / np)
             for lx in 1:np+1 for ly in 1:np+1 for lz in 1:np+1]     # z fastest
-    Threads.@threads for ik in 1:length(kpts)
-        H = zeros(ComplexF64, nw, nw)
-        for ir in 1:length(irvec)
-            fac = cis(TWOPI * dot(kpts[ik], SVector{3,Float64}(irvec[ir]...))) / ndegen[ir]
-            @views H .+= fac .* Hr[:, :, ir]
-        end
-        eigs[:, ik] = eigvals(Hermitian(H))
-    end
+    threaded_ksum(
+        (st, ik) -> begin
+            H = st.H
+            fill!(H, 0)
+            for ir in 1:length(irvec)
+                fac = cis(TWOPI * dot(kpts[ik], SVector{3,Float64}(irvec[ir]...))) / ndegen[ir]
+                @views H .+= fac .* Hr[:, :, ir]
+            end
+            eigs[:, ik] = eigvals!(Hermitian(H))
+        end,
+        () -> (H=zeros(ComplexF64, nw, nw),),
+        length(kpts))
     B = lattice.B
     open(seedname * ".bxsf", "w") do io
         println(io, "  BEGIN_INFO")
@@ -241,13 +245,16 @@ function tabulate_3d(bm::BerryModel; mesh::NTuple{3,Int}, colour=nothing)
     E = Array{Float64,4}(undef, nw, n1, n2, n3)
     C = colour === nothing ? nothing : Array{Float64,4}(undef, nw, n1, n2, n3)
     kl = [(i1, i2, i3) for i1 in 1:n1 for i2 in 1:n2 for i3 in 1:n3]
-    Threads.@threads for idx in 1:length(kl)
-        i1, i2, i3 = kl[idx]
-        kf = SVector((i1 - 1) / n1, (i2 - 1) / n2, (i3 - 1) / n3)
-        Ek, _, U = eig_deleig_vec(bm, kf; deriv=false)
-        E[:, i1, i2, i3] = Ek
-        colour !== nothing && (C[:, i1, i2, i3] = colour(bm, kf, Ek, U))
-    end
+    threaded_ksum(
+        (st, idx) -> begin
+            i1, i2, i3 = kl[idx]
+            kf = SVector((i1 - 1) / n1, (i2 - 1) / n2, (i3 - 1) / n3)
+            Ek, _, U = eig_deleig_vec!(st.work, bm, kf; deriv=false)
+            E[:, i1, i2, i3] = Ek
+            colour !== nothing && (C[:, i1, i2, i3] = colour(bm, kf, Ek, U))
+        end,
+        () -> (work=BerryKWork(nw),),
+        length(kl))
     return E, C
 end
 

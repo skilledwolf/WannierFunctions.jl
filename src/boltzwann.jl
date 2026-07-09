@@ -11,8 +11,6 @@
 using LinearAlgebra
 using StaticArrays
 
-const KB_SI = 1.3806504e-23        # CODATA2006
-
 "Symmetric-tensor packing order used by BoltzWann files: xx, xy, yy, xz, yz, zz."
 const TDF_PAIRS = ((1, 1), (1, 2), (2, 2), (1, 3), (2, 3), (3, 3))
 
@@ -66,11 +64,12 @@ function boltzwann(bm::BerryModel; kmesh::NTuple{3,Int}=(25, 25, 25), relax_time
     nktot = prod(kmesh)
     kl = [SVector(i / kmesh[1], j / kmesh[2], k / kmesh[3])
           for i in 0:kmesh[1]-1 for j in 0:kmesh[2]-1 for k in 0:kmesh[3]-1]
-    acc = [zeros(6, nE) for _ in 1:nktot]
-    Threads.@threads for idx in 1:nktot
-        _tdf_kpoint!(acc[idx], bm, kl[idx], es, tdf_smr_width, elec_per_state)
-    end
-    tdf = sum(acc) .* (relax_time / (nktot * cell_volume(bm.lattice)))
+    states = threaded_ksum(
+        (st, idx) -> _tdf_kpoint!(st.acc, st.work, bm, kl[idx], es, tdf_smr_width,
+                                  elec_per_state),
+        () -> (work=BerryKWork(num_wann(bm)), acc=zeros(6, nE)),
+        nktot)
+    tdf = sum(st.acc for st in states) .* (relax_time / (nktot * cell_volume(bm.lattice)))
 
     # transport integrals per (μ, T)
     nμ, nT = length(mus), length(temps)
@@ -104,9 +103,10 @@ function boltzwann(bm::BerryModel; kmesh::NTuple{3,Int}=(25, 25, 25), relax_time
     return BoltzWannResult(es, tdf, mus, temps, elcond, sigmas, seebeck, kappa)
 end
 
-function _tdf_kpoint!(out::Matrix{Float64}, bm::BerryModel, kf::SVector{3,Float64},
+function _tdf_kpoint!(out::Matrix{Float64}, kwork::BerryKWork, bm::BerryModel,
+                      kf::SVector{3,Float64},
                       es::Vector{Float64}, smr_width::Float64, elec_per_state::Int)
-    E, dE = eig_deleig(bm, kf; deriv=true)
+    E, dE, _ = eig_deleig_vec!(kwork, bm, kf; deriv=true)
     nE = length(es)
     binwidth = es[2] - es[1]
     for n in 1:length(E)
